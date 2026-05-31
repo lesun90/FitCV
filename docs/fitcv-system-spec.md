@@ -244,9 +244,22 @@ FitCV-specific UX rules:
 - AI requests go directly from the browser to the configured provider when provider capabilities allow it.
 - If a provider cannot be called directly from the browser, FitCV must explain the limitation and point to local endpoint options rather than routing through a FitCV backend.
 
+## Local Runtime
+
+After milestone 1, FitCV must support a simple local runtime for users and contributors:
+
+```bash
+docker compose up
+```
+
+The local runtime serves the FitCV browser app on localhost, requires no login, and does not introduce server-side user data storage. Browser-local data, API key behavior, AI provider disclosure, and browser-only LaTeX compilation work the same way as the hosted app.
+
+The Docker Compose setup must support live reload for development. Code changes should rebuild or reload the running app without manually restarting the container. The setup must document default ports, mounted source paths, environment variables, and how to clear local browser data.
+
 ## Milestones
 
 - **Milestone 1: Local Resume Workbench And Browser PDF**
+- **Milestone 1.1: Docker Compose Local Runtime**
 - **Milestone 2: AI Polish And CV Scoring**
 - **Milestone 3: Fit-To-JD Fitted CVs**
 - **Milestone 4: Template Expansion And Customization**
