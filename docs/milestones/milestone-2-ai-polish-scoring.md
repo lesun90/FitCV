@@ -7,7 +7,8 @@ Add bring-your-own AI provider support, AI polish, CV quality scoring, richer AT
 ## Scope
 
 - AI provider settings.
-- OpenAI, Claude, DeepSeek, Gemini, and local/OpenAI-compatible endpoint support.
+- OpenAI and local/OpenAI-compatible endpoint support.
+- Provider adapter contract for later Claude, DeepSeek, Gemini, and additional compatible providers.
 - Optional local browser storage for API keys.
 - AI polish for selected fields.
 - AI-assisted cleanup for uploaded CV extraction.
@@ -108,7 +109,8 @@ Accepted suggestions update the local resume. Rejected suggestions are retained 
 
 ## Acceptance Criteria
 
-- A user can configure at least one cloud provider and one local/OpenAI-compatible endpoint shape.
+- A user can configure OpenAI plus at least one local/OpenAI-compatible endpoint shape.
+- Claude, DeepSeek, Gemini, and additional compatible providers can be added after the provider adapter contract is stable.
 - Remembering API keys is optional and clearly labeled.
 - API keys are not exported in `.fitcv` backups.
 - A user can polish a field and review the suggestion before applying.

@@ -37,7 +37,7 @@ User-provided text used to evaluate or generate a fitted CV. Job descriptions ar
 
 ### Uploaded CV
 
-An existing resume file provided by the user as a starting point. Supported target formats are PDF, DOCX, plain text, and Markdown. FitCV extracts structured resume data from the file, creates a base resume, opens it in the editor, and marks extracted fields as needing review until the user confirms them.
+An existing resume file provided by the user as a starting point. The first milestone supports PDF import only. Later milestones can expand supported formats to DOCX, plain text, Markdown, image-based resumes, or scanned PDFs when browser-compatible extraction quality is acceptable. FitCV extracts structured resume data from the file, creates a base resume, opens it in the editor, and marks extracted fields as needing review until the user confirms them.
 
 ### Provider Settings
 
@@ -62,15 +62,12 @@ Users can start by creating a blank/new resume or by uploading an existing CV. U
 
 Supported target formats:
 
-- PDF.
-- DOCX.
-- Plain text.
-- Markdown.
-- Future: image-based resumes or scanned PDFs through browser-compatible OCR or AI-assisted extraction.
+- Milestone 1: PDF with extractable text.
+- Future: DOCX, plain text, Markdown, image-based resumes, or scanned PDFs through browser-compatible parsing, OCR, or AI-assisted extraction.
 
 Extraction rules:
 
-- FitCV attempts deterministic parsing first where possible: PDF text extraction, DOCX structure, Markdown headings and lists, and plain text heuristics.
+- FitCV attempts deterministic parsing first where possible. Milestone 1 starts with PDF text extraction. Future import formats can add DOCX structure, Markdown headings and lists, plain text heuristics, and OCR.
 - If deterministic extraction is incomplete and AI is configured, FitCV can offer AI-assisted structuring through the user's configured provider.
 - Before AI-assisted extraction, FitCV discloses what extracted text will be sent and which provider will receive it.
 - Uploaded files are processed locally in the browser where possible and are not stored by FitCV servers.
@@ -135,7 +132,7 @@ IndexedDB is the working database for resumes, fitted CVs, job descriptions, upl
 
 ### Import And Export
 
-FitCV exports a portable `.fitcv` archive containing local resume data, fitted CVs, job descriptions, scoring metadata, template references, and optionally generated PDFs. API keys are never included by default.
+FitCV exports a portable `.fitcv` archive containing local resume data, fitted CVs, job descriptions, scoring metadata, template references, and optionally generated PDFs. API keys are never included in `.fitcv` archives.
 
 ### Resume Content Model
 
@@ -240,7 +237,7 @@ FitCV-specific UX rules:
 - Browser-local storage is allowed and is considered user-device storage.
 - `.fitcv` backups are user-controlled exports.
 - API keys are opt-in local browser storage only.
-- API keys are not included in `.fitcv` backups by default.
+- API keys are not included in `.fitcv` backups.
 - AI requests go directly from the browser to the configured provider when provider capabilities allow it.
 - If a provider cannot be called directly from the browser, FitCV must explain the limitation and point to local endpoint options rather than routing through a FitCV backend.
 

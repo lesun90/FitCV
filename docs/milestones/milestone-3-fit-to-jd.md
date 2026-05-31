@@ -38,12 +38,13 @@ Fitted CVs do not automatically change when the base resume changes. Future reba
 1. User opens a base resume.
 2. User pastes a job description.
 3. FitCV discloses which resume fields and JD text will be sent to the configured AI provider.
-4. AI proposes a fitted CV draft.
-5. FitCV creates a fitted CV snapshot.
+4. AI proposes fitted CV changes.
+5. FitCV creates a fitted CV draft with proposed changes kept separate from accepted content.
 6. Changed fields are highlighted.
 7. User accepts, rejects, or edits proposed changes.
-8. FitCV calculates JD Match Score.
-9. User compiles and exports a fitted PDF.
+8. Accepted changes update the fitted CV snapshot.
+9. FitCV calculates JD Match Score.
+10. User compiles and exports a fitted PDF after required review is complete.
 
 ## JD Match Score
 
@@ -73,6 +74,8 @@ Every AI-created changed field must be reviewable. Review includes:
 
 FitCV should warn when the AI suggests adding skills, experience, metrics, or claims that are not present in the source resume.
 
+Required review must complete before export. Unreviewed proposed changes stay in change records and do not silently become exported resume content.
+
 ## Dashboard Requirements
 
 The dashboard groups fitted CVs under their source base resume. Each fitted CV card shows:
@@ -93,5 +96,5 @@ Base resume cards show the number of fitted CVs and the latest compile/scoring s
 - The fitted CV is grouped under the base resume.
 - AI changes are highlighted and review-gated.
 - JD Match Score is generated and stored with methodology version.
-- A user can compile and export the fitted CV as a PDF.
+- A user can compile and export the fitted CV as a PDF after required review is complete.
 - Overclaim risks are visible before export.
