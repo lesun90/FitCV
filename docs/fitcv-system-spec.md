@@ -35,13 +35,17 @@ A curated LaTeX layout bundle plus a manual schema. The schema defines editable 
 
 User-provided text used to evaluate or generate a fitted CV. Job descriptions are stored locally and may be included in `.fitcv` backups.
 
+### Uploaded CV
+
+An existing resume file provided by the user as a starting point. Supported target formats are PDF, DOCX, plain text, and Markdown. FitCV extracts structured resume data from the file, creates a base resume, opens it in the editor, and marks extracted fields as needing review until the user confirms them.
+
 ### Provider Settings
 
 Bring-your-own AI configuration for OpenAI, Claude, DeepSeek, Gemini, and local or OpenAI-compatible endpoints. API keys may optionally be remembered in browser storage, but key persistence is off by default and keys are never exported in `.fitcv` archives.
 
 ## Main Workflows
 
-1. Create or import a base resume.
+1. Create a new base resume or upload an existing CV.
 2. Edit structured resume fields in a friendly workbench UI.
 3. Switch layouts freely between supported templates.
 4. Compile the selected LaTeX template in the browser.
@@ -51,6 +55,29 @@ Bring-your-own AI configuration for OpenAI, Claude, DeepSeek, Gemini, and local 
 8. Paste a job description and create a fitted CV draft.
 9. Review changed fields, accept or reject suggestions, and export a fitted PDF.
 10. Export or import a portable `.fitcv` backup.
+
+## CV Upload And Extraction
+
+Users can start by creating a blank/new resume or by uploading an existing CV. Upload extraction populates the same resume content model used by the editor; it is not a separate import-only workflow.
+
+Supported target formats:
+
+- PDF.
+- DOCX.
+- Plain text.
+- Markdown.
+- Future: image-based resumes or scanned PDFs through browser-compatible OCR or AI-assisted extraction.
+
+Extraction rules:
+
+- FitCV attempts deterministic parsing first where possible: PDF text extraction, DOCX structure, Markdown headings and lists, and plain text heuristics.
+- If deterministic extraction is incomplete and AI is configured, FitCV can offer AI-assisted structuring through the user's configured provider.
+- Before AI-assisted extraction, FitCV discloses what extracted text will be sent and which provider will receive it.
+- Uploaded files are processed locally in the browser where possible and are not stored by FitCV servers.
+- FitCV keeps the uploaded source file only if the user explicitly chooses to attach it locally.
+- Extracted fields carry confidence or review metadata.
+- Imported resumes remain marked as `needsReview` until the user confirms extracted fields.
+- After extraction, users can switch templates without losing imported data.
 
 ## Layout Switching
 
@@ -104,7 +131,7 @@ Each score stores methodology version, resume version, explanation, prioritized 
 
 ### Local Data Store
 
-IndexedDB is the working database for resumes, fitted CVs, job descriptions, provider settings, scoring reports, compile artifacts, and preferences. FitCV servers never store user resume data.
+IndexedDB is the working database for resumes, fitted CVs, job descriptions, uploaded-file attachments when explicitly retained, provider settings, scoring reports, compile artifacts, and preferences. FitCV servers never store user resume data.
 
 ### Import And Export
 
@@ -136,7 +163,11 @@ Every template must pass validation before export is enabled. Validation checks 
 
 ### Editor Engine
 
-The editor renders a consistent Magic-Resume-inspired workbench from the active template schema. It stores values in template-independent resume data where possible and preserves template-specific values under namespaces.
+The editor renders a consistent Magic-Resume-inspired workbench from the active template schema. It stores values in template-independent resume data where possible and preserves template-specific values under namespaces. Imported fields can display confidence and needs-review states until the user confirms or edits them.
+
+### CV Extraction Pipeline
+
+The extraction pipeline converts uploaded CV files into FitCV's structured resume content model. It has deterministic parsers for browser-readable formats and an optional AI-assisted structuring step when the user has configured a provider. Extraction output includes normalized fields, source snippets where available, confidence metadata, unsupported content notes, and review status.
 
 ### Browser LaTeX Pipeline
 
@@ -198,6 +229,7 @@ FitCV-specific UX rules:
 - AI suggestions are shown as original vs suggested text with rationale and accept/reject controls.
 - Scoring suggestions open the exact field they reference.
 - Fit-to-JD creates a fitted CV and does not destructively edit the base resume.
+- Uploaded CV extraction creates a base resume and opens the editor with extracted fields marked for review.
 - AI requests disclose the provider and content sent.
 - Compile failures show readable logs and likely field/template causes.
 

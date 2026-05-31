@@ -8,6 +8,7 @@ Expand FitCV beyond curated manual templates by adding marker-assisted schemas, 
 
 - Marker-assisted template schemas.
 - User template upload.
+- Advanced uploaded-CV support such as DOCX and OCR/scanned PDF import.
 - AI-assisted mapping from LaTeX to editable fields.
 - Template validation fixtures.
 - AI-created customization fields.
@@ -15,6 +16,10 @@ Expand FitCV beyond curated manual templates by adding marker-assisted schemas, 
 - Template compatibility reports.
 
 This milestone must preserve the safety and data ownership rules from earlier milestones.
+
+## Advanced CV Import
+
+Later import expansion can include DOCX and image-based/scanned PDF resumes when browser libraries and extraction quality are acceptable. OCR or AI-assisted image extraction must remain user-approved, local-first where possible, and explicit about any content sent to the configured provider.
 
 ## Marker-Assisted Schemas
 
@@ -78,6 +83,7 @@ Failed validation blocks PDF export for that template but does not delete user d
 ## Acceptance Criteria
 
 - A user can import a template bundle locally.
+- A user can import advanced CV formats if browser-compatible extraction is available.
 - FitCV can produce or validate an explicit schema from markers.
 - AI-assisted mapping is review-gated.
 - Customization fields are schema-backed and validated.

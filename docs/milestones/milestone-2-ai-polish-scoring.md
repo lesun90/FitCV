@@ -10,6 +10,7 @@ Add bring-your-own AI provider support, AI polish, CV quality scoring, richer AT
 - OpenAI, Claude, DeepSeek, Gemini, and local/OpenAI-compatible endpoint support.
 - Optional local browser storage for API keys.
 - AI polish for selected fields.
+- AI-assisted cleanup for uploaded CV extraction.
 - CV quality score.
 - AI-assisted ATS suggestions.
 - Shared change review UI.
@@ -55,6 +56,20 @@ Supported targets:
 
 The user can provide optional instructions such as "make this more concise" or "make this stronger for product engineering roles."
 
+## AI-Assisted CV Extraction Cleanup
+
+When a user uploads a CV and deterministic extraction is incomplete, FitCV can use the configured AI provider to structure extracted text into the resume model. This is review-gated and requires disclosure before sending content.
+
+AI-assisted extraction returns:
+
+- Proposed structured fields.
+- Source snippets where available.
+- Confidence or uncertainty notes.
+- Unsupported content notes.
+- Risk flags for inferred or unsupported claims.
+
+The user must review extracted fields in the editor before treating the resume as confirmed.
+
 ## CV Quality Score
 
 CV quality score evaluates the resume without a job description. It checks:
@@ -97,6 +112,8 @@ Accepted suggestions update the local resume. Rejected suggestions are retained 
 - Remembering API keys is optional and clearly labeled.
 - API keys are not exported in `.fitcv` backups.
 - A user can polish a field and review the suggestion before applying.
+- A user can use AI to clean up extracted CV data after an upload.
+- AI-assisted extraction output is marked as needing review.
 - A user can generate a CV quality score.
 - A user can see ATS suggestions with field-level references.
 - AI output cannot silently overwrite resume content.

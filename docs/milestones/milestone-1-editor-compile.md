@@ -8,6 +8,8 @@ Build the usable FitCV foundation without requiring AI. Users can create base re
 
 - Local-first dashboard.
 - Base resume creation, duplicate, delete, and open.
+- Upload existing CV from PDF, Markdown, or plain text.
+- Deterministic extraction into structured editor fields.
 - IndexedDB storage.
 - Portable `.fitcv` import/export.
 - Magic-Resume-inspired editor workbench.
@@ -20,14 +22,15 @@ Build the usable FitCV foundation without requiring AI. Users can create base re
 ## User Workflows
 
 1. User opens FitCV from localhost or hosted website.
-2. User creates a base resume from a curated template.
-3. User edits structured fields in the workbench.
-4. User reorders sections, hides sections, and adds custom fields.
-5. User switches templates and sees which fields are not shown.
-6. User compiles the PDF in the browser.
-7. User views compile logs if compilation fails.
-8. User exports the PDF or a `.fitcv` backup.
-9. User imports a `.fitcv` backup later and resumes editing.
+2. User creates a base resume from a curated template or uploads an existing CV.
+3. If a CV is uploaded, FitCV extracts structured fields and marks them as needing review.
+4. User edits structured fields in the workbench.
+5. User reorders sections, hides sections, and adds custom fields.
+6. User switches templates and sees which fields are not shown.
+7. User compiles the PDF in the browser.
+8. User views compile logs if compilation fails.
+9. User exports the PDF or a `.fitcv` backup.
+10. User imports a `.fitcv` backup later and resumes editing.
 
 ## UX Requirements
 
@@ -50,6 +53,7 @@ Editor interactions:
 - Repeatable items appear as compact cards that expand for editing.
 - Drag handles reorder sections and repeatable items.
 - Visibility toggles hide content without deleting it.
+- Imported fields show needs-review markers until confirmed or edited.
 - Delete actions require confirmation for destructive data.
 - Rich text fields support bullet lists, links, bold, italic, and undo/redo where template-safe.
 
@@ -61,7 +65,20 @@ Editor interactions:
 - Unsupported fields remain preserved when switching templates.
 - Data records include schema version and timestamps.
 - `.fitcv` archives include resume data, fitted CV data if present, template references, scoring metadata if present, and optional PDFs.
+- Uploaded source files are not retained unless the user explicitly attaches them locally.
 - `.fitcv` archives do not include API keys.
+
+## CV Upload And Extraction
+
+Milestone 1 supports deterministic import for:
+
+- PDF with extractable text.
+- Markdown.
+- Plain text.
+
+Extraction maps detected content into the normalized resume model: profile, summary, experience, education, projects, skills, links, awards, and custom sections. Extraction output includes review metadata and unsupported content notes.
+
+DOCX, OCR, and AI-assisted cleanup are out of scope for milestone 1.
 
 ## Template Requirements
 
@@ -102,6 +119,8 @@ AI-based CV quality scoring is out of scope for this milestone.
 ## Acceptance Criteria
 
 - A user can create, edit, save, reload, and delete a base resume locally.
+- A user can upload a text-readable CV and populate the editor with extracted fields.
+- Extracted fields are marked as needing review.
 - A user can switch between at least two curated templates without losing data.
 - Unsupported fields are preserved and surfaced.
 - A user can compile and preview a PDF in the browser.
