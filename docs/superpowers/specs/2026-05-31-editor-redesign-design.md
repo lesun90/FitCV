@@ -110,13 +110,13 @@ All section editors share the same component pattern:
 
 An "Add" button sits below the list.
 
-The field grid uses two columns on panel widths above 440px, one column below.
+The field grid uses two columns at desktop widths, one column on mobile (below the existing `820px` breakpoint).
 
 The exact fields per section follow the type definitions in `src/domain/types.ts` directly — no deviation.
 
 ### Summary section
 
-The summary section editor shows the profile field grid (name, headline, email, phone, location, links) and below it the summary textarea and skills textarea. These are not item cards — they are stacked labeled fields.
+The summary section editor shows the profile field grid (name, headline, email, phone, location, links) and below it the summary textarea. These are not item cards — they are stacked labeled fields. Skills are not shown here — they belong to the Skills section editor.
 
 ---
 
