@@ -2414,3 +2414,30 @@ pre {
     grid-template-columns: 1fr;
   }
 }
+
+/* latex editor — live edit */
+.latex-pdf-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.chrome-button.selected {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface);
+}
+
+.latex-recompile-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(2px);
+  color: var(--fg-muted, #62686d);
+  font-size: 0.85rem;
+}

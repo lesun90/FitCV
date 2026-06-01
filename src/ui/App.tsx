@@ -37,7 +37,8 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
-  Upload
+  Upload,
+  Zap
 } from 'lucide-react';
 import { buildLatexFileTree, type LatexFileTreeNode, type LatexProjectFile } from '../domain/latexProject';
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
@@ -60,7 +61,8 @@ const sectionLabels: Record<SectionKey, string> = {
 };
 
 type ViewMode = 'dashboard' | 'editor';
-type LatexProjectState = BundledLatexProject & {
+type LatexProjectState = Omit<BundledLatexProject, 'readOnly'> & {
+  readOnly: boolean;
   activePath: string;
   mainFile: string;
   workingFiles: LatexProjectFile[];
@@ -248,6 +250,9 @@ const LatexEditorRoute = () => {
   const [engine, setEngine] = useState<LatexCompilerEngine>('xelatex');
   const [cacheState, setCacheState] = useState<LatexCompilerCacheState>('not-ready');
   const [showLogs, setShowLogs] = useState(false);
+  const [autoCompile, setAutoCompile] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const compileGenRef = useRef(0);
   const bundledProjects = useMemo(() => listBundledLatexProjects(), []);
 
   useEffect(() => {
@@ -267,6 +272,7 @@ const LatexEditorRoute = () => {
       const firstMain = template.mainFileCandidates[0] ?? template.files.find((file) => file.kind === 'text' && file.path.endsWith('.tex'))?.path ?? '';
       setProject({
         ...template,
+        readOnly: false,
         workingFiles: template.files,
         activePath: firstMain,
         mainFile: firstMain
@@ -286,14 +292,24 @@ const LatexEditorRoute = () => {
     });
   };
 
-  const compileProject = async () => {
+  const compileProject = async (opts?: { auto?: boolean }) => {
     if (!project?.mainFile) return;
+    const gen = ++compileGenRef.current;
     setBusy('Preparing browser compile');
-    setShowLogs(true);
-    setCompileResult(await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine }));
+    if (!opts?.auto) setShowLogs(true);
+    const result = await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine });
+    if (gen !== compileGenRef.current) return;
+    setCompileResult(result);
     setBusy('');
     checkLatexCompilerCacheState().then(setCacheState);
   };
+
+  useEffect(() => {
+    if (!autoCompile || !project?.mainFile) return;
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void compileProject({ auto: true }), 1500);
+    return () => clearTimeout(debounceRef.current);
+  }, [project?.workingFiles, autoCompile]);
 
   return (
     <main className="latex-shell">
@@ -327,7 +343,13 @@ const LatexEditorRoute = () => {
             </select>
           </label>
           <StatusPill icon={<LockKeyhole />} label="Compiler" value={formatCacheState(cacheState)} tone="warn" />
-          <button className="chrome-button" disabled={!project || Boolean(busy)} onClick={compileProject}><Play />Compile</button>
+          <button
+            className={`chrome-button${autoCompile ? ' selected' : ''}`}
+            disabled={!project}
+            onClick={() => setAutoCompile(v => !v)}
+            aria-label={autoCompile ? 'Disable auto-compile' : 'Enable auto-compile'}
+          ><Zap />Auto</button>
+          <button className="chrome-button" disabled={!project || Boolean(busy)} onClick={() => compileProject()}><Play />Compile</button>
           <button className="chrome-button primary" disabled={!compileResult?.pdfBlob} onClick={() => compileResult?.pdfBlob && downloadBlob(compileResult.pdfBlob, `${project?.displayName ?? 'latex-project'}.pdf`)}><Download />PDF</button>
         </div>
       </header>
@@ -342,7 +364,7 @@ const LatexEditorRoute = () => {
                 <span>Project</span>
                 <strong>{project.displayName}</strong>
               </div>
-              <span className="readonly-badge"><LockKeyhole />Read-only</span>
+              {project.readOnly && <span className="readonly-badge"><LockKeyhole />Read-only</span>}
             </div>
             <LatexFileTree nodes={tree} activePath={project.activePath} onOpen={(path) => setProject({ ...project, activePath: path })} />
             <div className="latex-load-report">
@@ -375,7 +397,15 @@ const LatexEditorRoute = () => {
           <aside className="latex-preview-pane" aria-label="LaTeX PDF preview and logs">
             <div className="latex-preview-paper">
               {latexPdfUrl ? (
-                <iframe title="LaTeX PDF preview" src={formatPdfPreviewUrl(latexPdfUrl)} />
+                <div className="latex-pdf-wrap">
+                  <iframe title="LaTeX PDF preview" src={formatPdfPreviewUrl(latexPdfUrl)} />
+                  {busy && (
+                    <div className="latex-recompile-overlay" aria-label="Recompiling">
+                      <Loader2 className="latex-spin" />
+                      <span>Recompiling…</span>
+                    </div>
+                  )}
+                </div>
               ) : (
                 <div className="latex-paper-placeholder">
                   <Braces />
