@@ -76,7 +76,7 @@ A `<Zap>` button added to `.latex-topbar-actions` before the Compile button:
 
 ```tsx
 <button
-  className={`chrome-button${autoCompile ? ' active' : ''}`}
+  className={`chrome-button${autoCompile ? ' selected' : ''}`}
   onClick={() => setAutoCompile(v => !v)}
   aria-label={autoCompile ? 'Disable auto-compile' : 'Enable auto-compile'}
 >
@@ -115,10 +115,10 @@ When there is no previous PDF (first compile), the existing `.latex-paper-placeh
   height: 100%;
 }
 
-.latex-pdf-wrap iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
+.chrome-button.selected {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--surface);
 }
 
 .latex-recompile-overlay {
