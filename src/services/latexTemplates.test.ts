@@ -8,4 +8,9 @@ describe('bundled LaTeX templates', () => {
     expect(classFile).toContain('UprightFont=SourceSansPro-Regular.otf');
     expect(fontAwesomeFile).toContain('FontAwesome.otf');
   });
+
+  it('uses unicode-math options supported by BusyTeX xelatex', () => {
+    expect(classFile).toContain('math-style=TeX');
+    expect(classFile).not.toContain('vargreek-shape');
+  });
 });
