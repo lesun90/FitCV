@@ -4,6 +4,8 @@ FitCV is a local-first resume workbench. Milestone 1 ships a browser app for cre
 
 ## Quick Start
 
+FitCV currently uses Node.js with npm and a committed `package-lock.json` as its project runtime standard.
+
 ```bash
 npm install
 npm run dev

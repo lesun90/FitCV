@@ -123,3 +123,14 @@ export const switchTemplate = (resume: ResumeRecord, templateId: TemplateId): Re
   next.templateSettings[templateId] ??= defaultTemplateSettings(templateId);
   return touchResume(next);
 };
+
+export const clearReviewMarkersForField = (resume: ResumeRecord, field: string): ResumeRecord => {
+  let changed = false;
+  const reviewMarkers = resume.reviewMarkers.map((marker) => {
+    if (marker.field !== field || !marker.needsReview) return marker;
+    changed = true;
+    return { ...marker, needsReview: false };
+  });
+
+  return changed ? touchResume({ ...resume, reviewMarkers }) : resume;
+};

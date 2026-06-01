@@ -134,9 +134,17 @@ const extractLatexErrors = (log: string): string[] => {
 
 const flattenBusyTexLogs = (result: CompileResult) => {
   const runLogs = (result.logs ?? []).flatMap((entry) =>
-    [entry.cmd, entry.stdout, entry.stderr, entry.log, entry.missfontlog, entry.aux].filter(Boolean)
+    [
+      entry.cmd,
+      entry.stdout,
+      entry.stderr,
+      entry.log,
+      (entry as { texmflog?: string }).texmflog,
+      entry.missfontlog,
+      entry.aux
+    ].filter((part): part is string => Boolean(part))
   );
-  const logs = [`BusyTeX exit code: ${result.exitCode}`, ...runLogs, result.log].filter(Boolean);
+  const logs = [`BusyTeX exit code: ${result.exitCode}`, ...runLogs, result.log].filter((part): part is string => Boolean(part));
   return logs.length ? logs : ['BusyTeX finished without logs.'];
 };
 

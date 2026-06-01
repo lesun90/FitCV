@@ -3,8 +3,6 @@ import {
   AlignCenter,
   AlignLeft,
   AlignRight,
-  AlertTriangle,
-  Braces,
   CheckCircle2,
   ChevronLeft,
   Clock3,
@@ -14,41 +12,34 @@ import {
   EyeOff,
   FileArchive,
   FileCheck2,
-  FileText,
   FilePlus2,
-  Folder,
   FolderOpen,
   Github,
   GripVertical,
   Home,
   Layers,
   Loader2,
-  LockKeyhole,
   Mail,
   MapPin,
   MoreHorizontal,
   PanelLeftClose,
   Pencil,
   Phone,
-  Play,
   Plus,
   RotateCw,
   Settings,
   ShieldCheck,
   Sparkles,
   Trash2,
-  Upload,
-  Zap
+  Upload
 } from 'lucide-react';
-import { buildLatexFileTree, type LatexFileTreeNode, type LatexProjectFile } from '../domain/latexProject';
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
 import { runAtsChecks } from '../domain/checks';
-import { createResume, duplicateResume, renameResume, sampleResume, switchTemplate, touchResume } from '../domain/resume';
+import { clearReviewMarkersForField, createResume, duplicateResume, renameResume, sampleResume, switchTemplate, touchResume } from '../domain/resume';
 import { analyzeTemplateCompatibility, templates } from '../domain/templates';
 import type { CompileArtifact, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from '../domain/types';
-import { busyTexLicenseReview, checkLatexCompilerCacheState, compileLatexProject, type LatexCompileResult, type LatexCompilerCacheState, type LatexCompilerEngine } from '../services/latexCompiler';
-import { listBundledLatexProjects, loadBundledLatexProject, type BundledLatexProject, type BundledLatexProjectSummary } from '../services/latexTemplates';
 import { storage } from '../services/storage';
+import { LatexEditorRoute } from './LatexEditorRoute';
 
 const sectionLabels: Record<SectionKey, string> = {
   summary: 'Summary',
@@ -61,14 +52,6 @@ const sectionLabels: Record<SectionKey, string> = {
 };
 
 type ViewMode = 'dashboard' | 'editor';
-type LatexProjectState = Omit<BundledLatexProject, 'readOnly'> & {
-  readOnly: boolean;
-  activePath: string;
-  mainFile: string;
-  workingFiles: LatexProjectFile[];
-};
-
-import { formatPdfPreviewUrl, highlightLatexSource } from './latexUtils';
 
 const getSettings = (resume: ResumeRecord): TemplateSettings => {
   const defaults: TemplateSettings = { color: '#111111', typography: '16/1.5', spacing: 'comfortable', pagePadding: 49 };
@@ -174,12 +157,20 @@ export const App = () => {
     setBusy('Importing archive');
     const archive = await importFitcvArchive(file);
     for (const resume of archive.resumes) await storage.saveResume(resume);
+    for (const fittedCv of archive.fittedCvs) await storage.saveFittedCv(fittedCv);
+    for (const jobDescription of archive.jobDescriptions) await storage.saveJobDescription(jobDescription);
+    for (const scoringReport of archive.scoringReports) await storage.saveScoringReport(scoringReport);
     await hydrate();
     setBusy('');
   };
 
   const exportArchive = async () => {
-    const file = await exportFitcvArchive({ resumes, artifacts: artifact ? [artifact] : [] });
+    const [fittedCvs, jobDescriptions, scoringReports] = await Promise.all([
+      storage.listFittedCvs(),
+      storage.listJobDescriptions(),
+      storage.listScoringReports()
+    ]);
+    const file = await exportFitcvArchive({ resumes, artifacts: artifact ? [artifact] : [], fittedCvs, jobDescriptions, scoringReports });
     downloadBlob(file, file.name);
   };
 
@@ -241,388 +232,6 @@ export const App = () => {
     />
   );
 };
-
-const LatexEditorRoute = () => {
-  const [project, setProject] = useState<LatexProjectState>();
-  const [compileResult, setCompileResult] = useState<LatexCompileResult>();
-  const [busy, setBusy] = useState('');
-  const [error, setError] = useState('');
-  const [engine, setEngine] = useState<LatexCompilerEngine>('xelatex');
-  const [cacheState, setCacheState] = useState<LatexCompilerCacheState>('not-ready');
-  const [showLogs, setShowLogs] = useState(false);
-  const [autoCompile, setAutoCompile] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
-  const compileGenRef = useRef(0);
-  const bundledProjects = useMemo(() => listBundledLatexProjects(), []);
-
-  useEffect(() => {
-    checkLatexCompilerCacheState().then(setCacheState);
-  }, []);
-
-  const activeFile = project?.workingFiles.find((file) => file.path === project.activePath);
-  const textFiles = project?.workingFiles.filter((file): file is Extract<LatexProjectFile, { kind: 'text' }> => file.kind === 'text') ?? [];
-  const tree = useMemo(() => buildLatexFileTree(project?.workingFiles ?? []), [project?.workingFiles]);
-  const latexPdfUrl = useMemo(() => (compileResult?.pdfBlob ? URL.createObjectURL(compileResult.pdfBlob) : ''), [compileResult?.pdfBlob]);
-
-  const openBundledProject = async (id: string) => {
-    try {
-      setBusy('Loading bundled template');
-      setError('');
-      const template = await loadBundledLatexProject(id);
-      const firstMain = template.mainFileCandidates[0] ?? template.files.find((file) => file.kind === 'text' && file.path.endsWith('.tex'))?.path ?? '';
-      setProject({
-        ...template,
-        readOnly: false,
-        workingFiles: template.files,
-        activePath: firstMain,
-        mainFile: firstMain
-      });
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Unable to load bundled LaTeX project.');
-    } finally {
-      setBusy('');
-    }
-  };
-
-  const updateActiveFile = (contents: string) => {
-    if (!project || activeFile?.kind !== 'text') return;
-    setProject({
-      ...project,
-      workingFiles: project.workingFiles.map((file) => (file.path === activeFile.path && file.kind === 'text' ? { ...file, contents } : file))
-    });
-  };
-
-  const compileProject = async (opts?: { auto?: boolean }) => {
-    if (!project?.mainFile) return;
-    const gen = ++compileGenRef.current;
-    setBusy('Preparing browser compile');
-    if (!opts?.auto) setShowLogs(true);
-    const result = await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine });
-    if (gen !== compileGenRef.current) return;
-    setCompileResult(result);
-    setBusy('');
-    checkLatexCompilerCacheState().then(setCacheState);
-  };
-
-  useEffect(() => {
-    if (!autoCompile || !project?.mainFile) return;
-    clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void compileProject({ auto: true }), 1500);
-    return () => clearTimeout(debounceRef.current);
-  }, [project?.workingFiles, autoCompile]);
-
-  return (
-    <main className="latex-shell">
-      <header className="latex-topbar">
-        <div className="magic-brand">
-          <strong>FitCV</strong>
-          <span>/</span>
-          <em>LaTeX</em>
-        </div>
-        <div className="latex-route-note">Standalone route</div>
-        <div className="latex-topbar-actions">
-          <label className="latex-select-label">
-            Main
-            <select
-              value={project?.mainFile ?? ''}
-              onChange={(event) => project && setProject({ ...project, mainFile: event.target.value, activePath: event.target.value })}
-              disabled={!project}
-              aria-label="Main LaTeX file"
-            >
-              {(project?.mainFileCandidates.length ? project.mainFileCandidates : textFiles.map((file) => file.path)).map((path) => (
-                <option key={path} value={path}>{path}</option>
-              ))}
-            </select>
-          </label>
-          <label className="latex-select-label">
-            Engine
-            <select value={engine} onChange={(event) => setEngine(event.target.value as LatexCompilerEngine)} aria-label="LaTeX engine">
-              <option value="xelatex">XeTeX</option>
-              <option value="pdflatex">pdfTeX</option>
-              <option value="lualatex">LuaTeX</option>
-            </select>
-          </label>
-          <StatusPill icon={<LockKeyhole />} label="Compiler" value={formatCacheState(cacheState)} tone="warn" />
-          <button
-            className={`chrome-button${autoCompile ? ' selected' : ''}`}
-            disabled={!project}
-            onClick={() => setAutoCompile(v => !v)}
-            aria-label={autoCompile ? 'Disable auto-compile' : 'Enable auto-compile'}
-          ><Zap />Auto</button>
-          <button className="chrome-button" disabled={!project || Boolean(busy)} onClick={() => compileProject()}><Play />Compile</button>
-          <button className="chrome-button primary" disabled={!compileResult?.pdfBlob} onClick={() => compileResult?.pdfBlob && downloadBlob(compileResult.pdfBlob, `${project?.displayName ?? 'latex-project'}.pdf`)}><Download />PDF</button>
-        </div>
-      </header>
-
-      {!project ? (
-        <LatexLauncher busy={busy} error={error} projects={bundledProjects} cacheState={cacheState} onOpenProject={openBundledProject} />
-      ) : (
-        <section className="latex-workbench" aria-label="LaTeX editor workbench">
-          <aside className="latex-file-panel" aria-label="LaTeX file tree">
-            <div className="latex-panel-head">
-              <div>
-                <span>Project</span>
-                <strong>{project.displayName}</strong>
-              </div>
-              {project.readOnly && <span className="readonly-badge"><LockKeyhole />Read-only</span>}
-            </div>
-            <LatexFileTree nodes={tree} activePath={project.activePath} onOpen={(path) => setProject({ ...project, activePath: path })} />
-            <div className="latex-load-report">
-              <strong>{project.workingFiles.length} files loaded</strong>
-              <span>{project.rootPath}</span>
-            </div>
-          </aside>
-
-          <section className="latex-editor-pane" aria-label="LaTeX source editor">
-            <div className="latex-editor-tabs">
-              <button className="selected"><FileText />{project.activePath || 'No file selected'}</button>
-              <span>{activeFile?.kind === 'text' ? 'Source' : 'Binary asset'}</span>
-            </div>
-            {activeFile?.kind === 'text' ? (
-              <LatexCodeEditor
-                contents={activeFile.contents}
-                readOnly={project.readOnly}
-                activePath={activeFile.path}
-                onChange={updateActiveFile}
-              />
-            ) : (
-              <div className="latex-empty-editor">
-                <FileText />
-                <strong>Binary files are included for compile only.</strong>
-                <span>Select a text source file to inspect it.</span>
-              </div>
-            )}
-          </section>
-
-          <aside className="latex-preview-pane" aria-label="LaTeX PDF preview and logs">
-            <div className="latex-preview-paper">
-              {latexPdfUrl ? (
-                <div className="latex-pdf-wrap">
-                  <iframe title="LaTeX PDF preview" src={formatPdfPreviewUrl(latexPdfUrl)} />
-                  {busy && (
-                    <div className="latex-recompile-overlay" aria-label="Recompiling">
-                      <Loader2 className="latex-spin" />
-                      <span>Recompiling…</span>
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="latex-paper-placeholder">
-                  <Braces />
-                  <h2>Ready for browser compile</h2>
-                  <p>Compile runs through BusyTeX with the current in-memory project map. If runtime assets are missing, the logs will show the asset path to configure.</p>
-                </div>
-              )}
-            </div>
-            <CompilerStatusPanel result={compileResult} busy={busy} cacheState={cacheState} showLogs={showLogs} onToggleLogs={() => setShowLogs((v) => !v)} />
-          </aside>
-        </section>
-      )}
-    </main>
-  );
-};
-
-const LatexCodeEditor = ({
-  activePath,
-  contents,
-  readOnly,
-  onChange
-}: {
-  activePath: string;
-  contents: string;
-  readOnly: boolean;
-  onChange: (contents: string) => void;
-}) => {
-  const highlightRef = useRef<HTMLPreElement>(null);
-
-  return (
-    <div className="latex-code-frame">
-      <pre className="latex-code-highlight" ref={highlightRef} aria-hidden="true">
-        {highlightLatexSource(contents)}
-      </pre>
-      <textarea
-        className="latex-code-editor"
-        value={contents}
-        readOnly={readOnly}
-        spellCheck={false}
-        onScroll={(event) => {
-          if (!highlightRef.current) return;
-          highlightRef.current.style.transform = `translate(${-event.currentTarget.scrollLeft}px, ${-event.currentTarget.scrollTop}px)`;
-        }}
-        onChange={(event) => onChange(event.target.value)}
-        aria-label={`Editing ${activePath}`}
-      />
-    </div>
-  );
-};
-
-const LatexLauncher = ({
-  busy,
-  cacheState,
-  error,
-  projects,
-  onOpenProject
-}: {
-  busy: string;
-  cacheState: LatexCompilerCacheState;
-  error: string;
-  projects: BundledLatexProjectSummary[];
-  onOpenProject: (id: string) => void;
-}) => (
-  <section className="latex-launcher" aria-labelledby="latex-heading">
-    <div className="latex-launcher-copy">
-      <span className="eyebrow">Private browser workbench</span>
-      <h1 id="latex-heading">LaTeX Workbench</h1>
-      <p>Open a bundled resume template, inspect source files, select a main document, and prepare for local browser compilation without linking this route from the main FitCV navigation.</p>
-      <section className="latex-project-list" aria-label="Bundled LaTeX projects">
-        {projects.map((project) => (
-          <button key={project.id} className="latex-project-card" onClick={() => onOpenProject(project.id)} disabled={Boolean(busy)}>
-            <FolderOpen />
-            <span>
-              <strong>Open {project.displayName}</strong>
-              <small>{project.textFileCount} sources, {project.assetFileCount} assets</small>
-            </span>
-          </button>
-        ))}
-        {projects.length === 0 && <p>No bundled LaTeX projects were found under src/latex-templates.</p>}
-      </section>
-      <div className="latex-launch-actions">
-        <button className="chrome-button" disabled><Folder />Open local folder</button>
-      </div>
-      {busy && <div className="notice">{busy}</div>}
-      {error && <div className="notice error">{error}</div>}
-    </div>
-    <aside className="latex-license-card" aria-label="Compiler license status">
-      <AlertTriangle />
-      <strong>AGPL obligations accepted.</strong>
-      <p>{busyTexLicenseReview.packageName}@{busyTexLicenseReview.version} is enabled under {busyTexLicenseReview.license}. BusyTeX runtime assets are expected at the configured asset base path and project source still stays in the browser.</p>
-      <dl>
-        <div><dt>Source privacy</dt><dd>User project files stay in the browser.</dd></div>
-        <div><dt>Asset cache</dt><dd>{formatCacheState(cacheState)}</dd></div>
-        <div><dt>Default engine</dt><dd>XeTeX-ready boundary</dd></div>
-      </dl>
-    </aside>
-  </section>
-);
-
-const LatexFileTree = ({
-  nodes,
-  activePath,
-  onOpen
-}: {
-  nodes: LatexFileTreeNode[];
-  activePath: string;
-  onOpen: (path: string) => void;
-}) => (
-  <div className="latex-file-tree">
-    {nodes.map((node) => (
-      <LatexFileTreeItem key={node.path} node={node} activePath={activePath} onOpen={onOpen} />
-    ))}
-  </div>
-);
-
-const LatexFileTreeItem = ({ node, activePath, onOpen }: { node: LatexFileTreeNode; activePath: string; onOpen: (path: string) => void }) => {
-  if (node.type === 'folder') {
-    return (
-      <details open>
-        <summary><Folder />{node.name}</summary>
-        <div className="latex-folder-children">
-          {node.children?.map((child) => <LatexFileTreeItem key={child.path} node={child} activePath={activePath} onOpen={onOpen} />)}
-        </div>
-      </details>
-    );
-  }
-
-  return (
-    <button className={node.path === activePath ? 'latex-file active' : 'latex-file'} onClick={() => onOpen(node.path)}>
-      <FileText />
-      <span>{node.name}</span>
-    </button>
-  );
-};
-
-const CompilerStatusPanel = ({
-  result,
-  busy,
-  cacheState,
-  showLogs,
-  onToggleLogs
-}: {
-  result?: LatexCompileResult;
-  busy: string;
-  cacheState: LatexCompilerCacheState;
-  showLogs: boolean;
-  onToggleLogs: () => void;
-}) => {
-  const [showFullLog, setShowFullLog] = useState(false);
-  const hasDiagnostics = (result?.diagnostics.length ?? 0) > 0;
-  const statusLabel = busy
-    ? 'Compiling…'
-    : result
-      ? `${result.status} · ${result.elapsedMs}ms`
-      : 'Not run';
-  const panelClass = [
-    'latex-compiler-panel',
-    showLogs ? 'expanded' : '',
-    busy ? 'busy' : result?.status === 'success' ? 'status-success' : result?.status === 'failed' ? 'status-failed' : ''
-  ].filter(Boolean).join(' ');
-
-  return (
-    <section className={panelClass} aria-label="Compiler and logs">
-      <div className="latex-panel-head">
-        <div className="latex-panel-status-group">
-          {busy ? (
-            <Loader2 className="latex-spin" aria-hidden="true" />
-          ) : result?.status === 'success' ? (
-            <CheckCircle2 className="latex-status-icon good" aria-hidden="true" />
-          ) : result?.status === 'failed' ? (
-            <AlertTriangle className="latex-status-icon error" aria-hidden="true" />
-          ) : null}
-          <div>
-            <span>Compile logs</span>
-            <strong>{statusLabel}</strong>
-          </div>
-        </div>
-        <div className="latex-panel-head-actions">
-          <StatusPill icon={<Clock3 />} label="Cache" value={formatCacheState(result?.cacheState ?? cacheState)} tone="warn" />
-          <button className="chrome-button icon-only" onClick={onToggleLogs} aria-label={showLogs ? 'Hide logs' : 'Show logs'}>
-            {showLogs ? <EyeOff /> : <Eye />}
-          </button>
-        </div>
-      </div>
-
-      {busy && <div className="latex-compile-progress-bar" role="progressbar" aria-label="Compiling" />}
-
-      <div className={`latex-log-body${showLogs ? ' expanded' : ''}`}>
-        <div className="latex-log-body-inner">
-          {busy ? (
-            <div className="latex-log-compiling" aria-live="polite">
-              <Loader2 className="latex-spin" aria-hidden="true" />
-              <span>Compiler running in browser…</span>
-            </div>
-          ) : (
-            <>
-              {hasDiagnostics && !showFullLog ? (
-                <div className="latex-diagnostics">
-                  {result!.diagnostics.map((d) => <p key={d}>{d}</p>)}
-                </div>
-              ) : (
-                <pre className="latex-log-output">{result?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
-              )}
-              {hasDiagnostics && (
-                <button className="latex-log-toggle" onClick={() => setShowFullLog((v) => !v)}>
-                  {showFullLog ? 'Show errors only' : 'Show full log'}
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-};
-
-const formatCacheState = (state: string) => state.replaceAll('-', ' ');
 
 const Dashboard = ({
   resumes,
@@ -1230,9 +839,9 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => (
       <Field label="Email"><input type="email" value={active.content.profile.email} onChange={(e) => onChange((r) => patch(r, 'email', e.target.value))} /></Field>
       <Field label="Phone"><input type="tel" value={active.content.profile.phone} onChange={(e) => onChange((r) => patch(r, 'phone', e.target.value))} /></Field>
       <Field label="Location"><input value={active.content.profile.location} onChange={(e) => onChange((r) => patch(r, 'location', e.target.value))} /></Field>
-      <Field label="Links"><input value={active.content.profile.links.join(', ')} onChange={(e) => onChange((r) => touchResume({ ...r, content: { ...r.content, profile: { ...r.content.profile, links: splitList(e.target.value) } } }))} /></Field>
+      <Field label="Links"><input value={active.content.profile.links.join(', ')} onChange={(e) => onChange((r) => editField(r, 'content.profile.links', (resume) => ({ ...resume, content: { ...resume.content, profile: { ...resume.content.profile, links: splitList(e.target.value) } } })))} /></Field>
     </div>
-    <label className="stacked-field">Profile summary<textarea value={active.content.summary} onChange={(e) => onChange((r) => touchResume({ ...r, content: { ...r.content, summary: e.target.value } }))} /></label>
+    <label className="stacked-field">Profile summary<textarea value={active.content.summary} onChange={(e) => onChange((r) => editField(r, 'content.summary', (resume) => ({ ...resume, content: { ...resume.content, summary: e.target.value } })))} /></label>
   </div>
 );
 
@@ -1344,7 +953,7 @@ const SkillsEditor = ({ active, onChange }: SectionEditorProps) => (
       <textarea
         placeholder="Comma-separated: React, TypeScript, Node.js"
         value={active.content.skills.join(', ')}
-        onChange={(e) => onChange((r) => touchResume({ ...r, content: { ...r.content, skills: splitList(e.target.value) } }))}
+        onChange={(e) => onChange((r) => editField(r, 'content.skills', (resume) => ({ ...resume, content: { ...resume.content, skills: splitList(e.target.value) } })))}
       />
     </label>
   </div>
@@ -1357,7 +966,7 @@ const AwardsEditor = ({ active, onChange }: SectionEditorProps) => (
       <textarea
         placeholder="One award per line"
         value={active.content.awards.join('\n')}
-        onChange={(e) => onChange((r) => touchResume({ ...r, content: { ...r.content, awards: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) } }))}
+        onChange={(e) => onChange((r) => editField(r, 'content.awards', (resume) => ({ ...resume, content: { ...resume.content, awards: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) } })))}
       />
     </label>
   </div>
@@ -1611,15 +1220,24 @@ const PaperSection = ({
   </section>
 );
 
+const editField = (resume: ResumeRecord, field: string, update: (resume: ResumeRecord) => ResumeRecord) => {
+  const updated = update(resume);
+  const reviewed = clearReviewMarkersForField(updated, field);
+  return reviewed === updated ? touchResume(updated) : reviewed;
+};
+
 const patch = (resume: ResumeRecord, key: keyof ResumeRecord['content']['profile'], value: string) =>
-  touchResume({ ...resume, content: { ...resume.content, profile: { ...resume.content.profile, [key]: value } } });
+  editField(resume, `content.profile.${key}`, (next) => ({
+    ...next,
+    content: { ...next.content, profile: { ...next.content.profile, [key]: value } }
+  }));
 
 const splitList = (value: string) => value.split(',').map((item) => item.trim()).filter(Boolean);
 
 const updateExperience = (resume: ResumeRecord, index: number, patchValue: Partial<ResumeRecord['content']['experience'][number]>) => {
   const experience = [...resume.content.experience];
   experience[index] = { ...experience[index], ...patchValue };
-  return touchResume({ ...resume, content: { ...resume.content, experience } });
+  return editField(resume, 'content.experience', (next) => ({ ...next, content: { ...next.content, experience } }));
 };
 
 const updateDates = (resume: ResumeRecord, index: number, value: string) => {
@@ -1630,7 +1248,7 @@ const updateDates = (resume: ResumeRecord, index: number, value: string) => {
 const updateEducation = (resume: ResumeRecord, index: number, patchValue: Partial<ResumeRecord['content']['education'][number]>) => {
   const education = [...resume.content.education];
   education[index] = { ...education[index], ...patchValue };
-  return touchResume({ ...resume, content: { ...resume.content, education } });
+  return editField(resume, 'content.education', (next) => ({ ...next, content: { ...next.content, education } }));
 };
 
 const updateEducationDates = (resume: ResumeRecord, index: number, value: string) => {
@@ -1641,13 +1259,13 @@ const updateEducationDates = (resume: ResumeRecord, index: number, value: string
 const updateProjects = (resume: ResumeRecord, index: number, patchValue: Partial<ResumeRecord['content']['projects'][number]>) => {
   const projects = [...resume.content.projects];
   projects[index] = { ...projects[index], ...patchValue };
-  return touchResume({ ...resume, content: { ...resume.content, projects } });
+  return editField(resume, 'content.projects', (next) => ({ ...next, content: { ...next.content, projects } }));
 };
 
 const updateCustomSections = (resume: ResumeRecord, index: number, patchValue: Partial<ResumeRecord['content']['customSections'][number]>) => {
   const customSections = [...resume.content.customSections];
   customSections[index] = { ...customSections[index], ...patchValue };
-  return touchResume({ ...resume, content: { ...resume.content, customSections } });
+  return editField(resume, 'content.customSections', (next) => ({ ...next, content: { ...next.content, customSections } }));
 };
 
 const formatRelative = (date: string) => {

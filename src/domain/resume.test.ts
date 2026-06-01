@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createResume, duplicateResume, renameResume } from './resume';
+import { clearReviewMarkersForField, createResume, duplicateResume, renameResume } from './resume';
 
 describe('resume model', () => {
   it('creates a normalized resume with template settings kept separate from content', () => {
@@ -29,5 +29,41 @@ describe('resume model', () => {
     expect(renamed.title).toBe('Staff Engineer CV');
     expect(renamed.content).toEqual(original.content);
     expect(renamed.updatedAt).not.toBe(original.updatedAt);
+  });
+
+  it('clears review markers for an edited field without discarding review history', () => {
+    const resume = createResume('Imported Resume', 'classic-ats');
+    resume.reviewMarkers = [
+      {
+        field: 'content.profile.fullName',
+        sourceSnippet: 'Ada Lovelace',
+        note: 'Detected from the first text line.',
+        needsReview: true
+      },
+      {
+        field: 'content.summary',
+        sourceSnippet: 'Computing pioneer',
+        note: 'Built from early PDF text lines.',
+        needsReview: true
+      }
+    ];
+
+    const reviewed = clearReviewMarkersForField(resume, 'content.profile.fullName');
+
+    expect(reviewed.reviewMarkers).toEqual([
+      {
+        field: 'content.profile.fullName',
+        sourceSnippet: 'Ada Lovelace',
+        note: 'Detected from the first text line.',
+        needsReview: false
+      },
+      {
+        field: 'content.summary',
+        sourceSnippet: 'Computing pioneer',
+        note: 'Built from early PDF text lines.',
+        needsReview: true
+      }
+    ]);
+    expect(reviewed.version).toBe(resume.version + 1);
   });
 });

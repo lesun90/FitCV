@@ -104,6 +104,66 @@ export interface CompileArtifact {
   updatedAt: string;
 }
 
+export interface JobDescriptionRecord {
+  id: string;
+  schemaVersion: 1;
+  title: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FittedCvRecord {
+  id: string;
+  schemaVersion: 1;
+  title: string;
+  sourceResumeId: string;
+  sourceVersion: number;
+  content: ResumeContent;
+  jobDescriptionId?: string;
+  acceptedChangeIds: string[];
+  rejectedChangeIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ScoringReportRecord {
+  id: string;
+  schemaVersion: 1;
+  resumeId: string;
+  resumeVersion: number;
+  kind: 'ats' | 'cv-quality' | 'jd-match';
+  methodologyVersion: string;
+  suggestions: {
+    field: string;
+    message: string;
+    severity: 'info' | 'medium' | 'high';
+  }[];
+  createdAt: string;
+}
+
+export interface ProviderSettingsRecord {
+  id: string;
+  schemaVersion: 1;
+  provider: 'openai' | 'claude' | 'deepseek' | 'gemini' | 'local-openai-compatible';
+  endpoint?: string;
+  model?: string;
+  rememberApiKey: false;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UploadedFileAttachmentRecord {
+  id: string;
+  schemaVersion: 1;
+  resumeId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  retainedExplicitly: true;
+  createdAt: string;
+}
+
 export interface AppPreference {
   schemaVersion: 1;
   id: 'default';

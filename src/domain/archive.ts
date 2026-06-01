@@ -1,17 +1,29 @@
-import type { CompileArtifact, ResumeRecord } from './types';
+import type { CompileArtifact, FittedCvRecord, JobDescriptionRecord, ResumeRecord, ScoringReportRecord } from './types';
 
 export interface FitcvArchive {
   schemaVersion: 1;
   exportedAt: string;
   resumes: ResumeRecord[];
+  fittedCvs: FittedCvRecord[];
+  jobDescriptions: JobDescriptionRecord[];
+  scoringReports: ScoringReportRecord[];
   artifacts: Omit<CompileArtifact, 'pdfBlob'>[];
 }
 
-export const exportFitcvArchive = async (input: { resumes: ResumeRecord[]; artifacts: CompileArtifact[] }) => {
+export const exportFitcvArchive = async (input: {
+  resumes: ResumeRecord[];
+  artifacts: CompileArtifact[];
+  fittedCvs?: FittedCvRecord[];
+  jobDescriptions?: JobDescriptionRecord[];
+  scoringReports?: ScoringReportRecord[];
+}) => {
   const archive: FitcvArchive = {
     schemaVersion: 1,
     exportedAt: new Date().toISOString(),
     resumes: input.resumes,
+    fittedCvs: input.fittedCvs ?? [],
+    jobDescriptions: input.jobDescriptions ?? [],
+    scoringReports: input.scoringReports ?? [],
     artifacts: input.artifacts.map(({ pdfBlob: _pdfBlob, ...artifact }) => artifact)
   };
   const payload = JSON.stringify(archive, null, 2);
@@ -29,6 +41,10 @@ export const importFitcvArchive = async (file: Blob): Promise<FitcvArchive> => {
   if (archive.schemaVersion !== 1 || !Array.isArray(archive.resumes)) {
     throw new Error('Unsupported .fitcv archive.');
   }
+  archive.fittedCvs ??= [];
+  archive.jobDescriptions ??= [];
+  archive.scoringReports ??= [];
+  archive.artifacts ??= [];
   const serialized = JSON.stringify(archive);
   if (/api[_-]?key|secret|token/i.test(serialized)) {
     throw new Error('Archive contains secret-like fields and was not imported.');
