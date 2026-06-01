@@ -221,8 +221,8 @@
 %-------------------------------------------------------------------------------
 % Configure styles for each CV elements
 % For fundamental structures
-\newcommand*{\headerfirstnamestyle}[1]{{\fontsize{32pt}{1em}\headerfont\color{graytext} #1}}
-\newcommand*{\headerlastnamestyle}[1]{{\fontsize{32pt}{1em}\headerfont\color{graytext} #1}}
+\newcommand*{\headerfirstnamestyle}[1]{{\fontsize{32pt}{1em}\headerfontlight\color{darktext} #1}}
+\newcommand*{\headerlastnamestyle}[1]{{\fontsize{32pt}{1em}\headerfont\bfseries\color{darktext} #1}}
 \newcommand*{\headerpositionstyle}[1]{{\fontsize{7.6pt}{1em}\bodyfont\scshape\color{awesome} #1}}
 \newcommand*{\headeraddressstyle}[1]{{\fontsize{9pt}{1em}\headerfont\itshape\color{graytext} #1}}
 \newcommand*{\headersocialstyle}[1]{{\fontsize{9pt}{1em}\headerfont\color{text} #1}}
@@ -517,8 +517,10 @@
 % Define a subsection for CV
 % Usage: \cvsubsection{<subsection-title>}
 \newcommand{\cvsubsection}[1]{
+  \par\addvspace{0.75ex}
   \phantomsection{}
   \subsectionstyle{#1}
+  \par\nobreak\addvspace{0.25ex}
 }
 
 % Define an environment for projects
@@ -528,22 +530,21 @@
   \end{center}
 }
 % Define an entry of projects information
-% Usage: \cventry{<position>}{<title>}{<location>}{<date>}{<description>}
+% Usage: \projectentry{<title>}{}{}{}{<description>}
 \newcommand*{\projectentry}[5]{
   \setlength\tabcolsep{0pt}
   \setlength{\extrarowheight}{0pt}
-    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} r L{16cm}}
-    \entrytitlestyle{#1}\\
-    \multicolumn{2}{L{17cm}}{\descriptionstyle{#5}} \\
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} L{17cm}}
+    \entrytitlestyle{#1} \\
+    \descriptionstyle{#5} \\
   \end{tabular*}
 }
 
 % Define an environment for the top highlight summary block.
 % Owns its own vertical spacing since it has no \cvsection header.
 \newenvironment{highlights}{
-  \vspace{-5mm}
-  \fontsize{9pt}{1em}\bodyfont\upshape\color{text}
-  \vspace{-4mm}
+  \setlength{\parskip}{0pt}
+  \fontsize{9pt}{1.4em}\bodyfont\upshape\color{text}
   \begin{justify}
   \begin{itemize}[leftmargin=2ex, nosep, noitemsep]
     \setlength{\parskip}{0pt}
@@ -551,8 +552,6 @@
 }{
   \end{itemize}
   \end{justify}
-  \vspace{-2mm}
-  \vspace{-3mm}
 }
 
 % Define an environment for experience entries (alias for cventries)
@@ -578,8 +577,8 @@
       {\entrypositionstyle{#1} & \entrydatestyle{#4} \\}
       {\entrytitlestyle{#2} & \entrylocationstyle{#3} \\
       \entrypositionstyle{#1} & \entrydatestyle{#4} \\}
-    \multicolumn{2}{L{17cm}}{\descriptionstyle{#5}} \\
-  \end{tabular*}
+  \end{tabular*}%
+  \ifempty{#5}{}{\noindent\descriptionstyle{#5}}%
 }
 
 % Define an environment for researchentries
@@ -685,7 +684,7 @@
 
 % Define an environment for cvitems(for cventry)
 \newenvironment{cvitems}{
-  \vspace{-4mm}
+  \setlength{\parskip}{0pt}
   \begin{justify}
   \begin{itemize}[leftmargin=2ex, nosep, noitemsep]
     \setlength{\parskip}{0pt}
@@ -693,11 +692,10 @@
 }{
   \end{itemize}
   \end{justify}
-  \vspace{-2mm}
 }
 
 \newenvironment{highlightitems}{
-  \vspace{-4mm}
+  \setlength{\parskip}{0pt}
   \begin{justify}
   \begin{itemize}[leftmargin=2ex, nosep, noitemsep]
     \setlength{\parskip}{0pt}
@@ -705,7 +703,6 @@
 }{
   \end{itemize}
   \end{justify}
-  \vspace{-2mm}
 }
 
 
