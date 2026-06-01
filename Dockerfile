@@ -3,7 +3,7 @@ FROM node:22-bookworm-slim
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci && npm run busytex:assets
 
 COPY . .
 

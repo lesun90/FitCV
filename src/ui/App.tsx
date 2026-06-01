@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
+  AlertCircle,
   AlignCenter,
   AlignLeft,
   AlignRight,
   CheckCircle2,
   ChevronLeft,
+  ChevronUp,
   Clock3,
   Copy,
   Download,
@@ -19,28 +21,29 @@ import {
   Home,
   Layers,
   Loader2,
-  Mail,
-  MapPin,
   MoreHorizontal,
   PanelLeftClose,
   Pencil,
-  Phone,
   Plus,
   RotateCw,
   Settings,
   ShieldCheck,
   Sparkles,
+  Terminal,
   Trash2,
-  Upload
+  Upload,
+  Zap
 } from 'lucide-react';
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
 import { runAtsChecks } from '../domain/checks';
 import { clearReviewMarkersForField, createResume, duplicateResume, renameResume, sampleResume, switchTemplate, touchResume } from '../domain/resume';
 import { analyzeTemplateCompatibility, templates } from '../domain/templates';
-import type { CompileArtifact, LayoutModule, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from '../domain/types';
+import type { CompileArtifact, LayoutModule, ResumeRecord, SectionKey, TemplateId } from '../domain/types';
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
+import { formatPdfPreviewUrl } from './latexUtils';
+import { downloadBlob, StatusPill } from './shared';
 import { hasTemplateAdapter } from '../domain/templateAdapters';
 
 const sectionLabels: Record<SectionKey, string> = {
@@ -78,18 +81,6 @@ const updateLayoutModule = (
 
 type ViewMode = 'dashboard' | 'editor';
 
-const getSettings = (resume: ResumeRecord): TemplateSettings => {
-  const defaults: TemplateSettings = { color: '#111111', typography: '16/1.5', spacing: 'comfortable', pagePadding: 49 };
-  return { ...defaults, ...resume.templateSettings[resume.activeTemplateId] };
-};
-
-const applySettings = (resume: ResumeRecord, patch: Partial<TemplateSettings>): ResumeRecord =>
-  touchResume({ ...resume, templateSettings: { ...resume.templateSettings, [resume.activeTemplateId]: { ...getSettings(resume), ...patch } } });
-
-const parseTypo = (value: string) => {
-  const [s = '16', lh = '1.5'] = value.split('/');
-  return { size: parseFloat(s) || 16, lineHeight: parseFloat(lh) || 1.5 };
-};
 
 export const App = () => {
   if (window.location.pathname === '/latexeditor') return <LatexEditorRoute />;
@@ -100,7 +91,11 @@ export const App = () => {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [mode, setMode] = useState<ViewMode>('dashboard');
+  const [autoCompile, setAutoCompile] = useState(false);
   const active = resumes.find((resume) => resume.id === activeId) ?? resumes[0];
+
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const compileGenRef = useRef(0);
 
   useEffect(() => {
     void hydrate();
@@ -142,21 +137,37 @@ export const App = () => {
   const warningCount = checks.filter((check) => check.status !== 'pass').length;
   const cleanCompile = artifact?.status === 'clean' && artifact.resumeVersion === active?.version;
 
-  const compile = async () => {
-    if (!active) return;
+  // Takes an optional resume override so we can compile the correct resume
+  // immediately when switching sessions (before React state settles).
+  const compile = async (resumeOverride?: ResumeRecord) => {
+    const target = resumeOverride ?? active;
+    if (!target) return;
+    const gen = ++compileGenRef.current;
     try {
       setBusy('Compiling in browser');
       setError('');
       const { compileResumeToPdf } = await import('../services/pdf');
-      const result = await compileResumeToPdf(active);
+      const result = await compileResumeToPdf(target);
+      if (gen !== compileGenRef.current) return;
       await storage.saveArtifact(result);
       setArtifact(result);
     } catch (caught) {
+      if (gen !== compileGenRef.current) return;
       setError(caught instanceof Error ? caught.message : 'PDF compile failed.');
     } finally {
-      setBusy('');
+      if (gen === compileGenRef.current) setBusy('');
     }
   };
+
+  // Auto-compile: fires on content/layout changes only (not on a timer).
+  // If a compile is in-flight, incrementing compileGenRef discards its result
+  // and the new compile wins.
+  useEffect(() => {
+    if (!autoCompile || !active || mode !== 'editor') return;
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => void compile(), 1500);
+    return () => clearTimeout(debounceRef.current);
+  }, [active?.version, autoCompile]);
 
   const createBlank = () => {
     void save(createResume('Untitled Resume', 'awesome-cv'));
@@ -172,6 +183,7 @@ export const App = () => {
   const openResume = (resume: ResumeRecord) => {
     setActiveId(resume.id);
     setMode('editor');
+    void compile(resume);
   };
 
   const deleteActive = async () => {
@@ -244,6 +256,7 @@ export const App = () => {
       active={active}
       activeTemplate={activeTemplate}
       artifact={artifact}
+      autoCompile={autoCompile}
       busy={busy}
       checks={checks}
       cleanCompile={cleanCompile}
@@ -256,9 +269,8 @@ export const App = () => {
       onChange={updateActive}
       onCompile={compile}
       onDelete={deleteActive}
-      onDuplicate={cloneActive}
       onDownloadPdf={() => artifact?.pdfBlob && downloadBlob(artifact.pdfBlob, `${active.title}.pdf`)}
-      onExportArchive={exportArchive}
+      onToggleAutoCompile={() => setAutoCompile((v) => !v)}
     />
   );
 };
@@ -362,6 +374,7 @@ const EditorWorkspace = ({
   active,
   activeTemplate,
   artifact,
+  autoCompile,
   busy,
   checks,
   cleanCompile,
@@ -374,13 +387,13 @@ const EditorWorkspace = ({
   onChange,
   onCompile,
   onDelete,
-  onDuplicate,
   onDownloadPdf,
-  onExportArchive
+  onToggleAutoCompile,
 }: {
   active: ResumeRecord;
   activeTemplate?: (typeof templates)[number];
   artifact?: CompileArtifact;
+  autoCompile: boolean;
   busy: string;
   checks: ReturnType<typeof runAtsChecks>;
   cleanCompile: boolean;
@@ -393,9 +406,8 @@ const EditorWorkspace = ({
   onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
   onCompile: () => void;
   onDelete: () => void;
-  onDuplicate: () => void;
   onDownloadPdf: () => void;
-  onExportArchive: () => void;
+  onToggleAutoCompile: () => void;
 }) => {
   const [selectedSection, setSelectedSection] = useState<SectionKey>('experience');
   const [selectedModuleId, setSelectedModuleId] = useState<string>();
@@ -438,13 +450,20 @@ const EditorWorkspace = ({
           {cleanCompile ? 'PDF ready' : 'Not backed up'}
         </span>
         <button className="chrome-icon" aria-label="Editor settings"><Settings /></button>
-        <button className="chrome-button" onClick={onCompile}><RotateCw />Compile</button>
+        <button
+          className={`chrome-button${autoCompile ? ' selected' : ''}`}
+          onClick={onToggleAutoCompile}
+          aria-label={autoCompile ? 'Disable auto-compile' : 'Enable auto-compile'}
+          title={autoCompile ? 'Auto-compile on (click to disable)' : 'Auto-compile off (click to enable)'}
+        >
+          <Zap />Auto
+        </button>
+        <button className="chrome-button" onClick={onCompile} disabled={!!busy}><RotateCw />Compile</button>
         <button className="chrome-button primary" disabled={!artifact?.pdfBlob || artifact.status !== 'clean'} onClick={onDownloadPdf}><Download />Export</button>
         <button className="ghost-button danger" onClick={onDelete}><Trash2 />Delete</button>
       </header>
 
-      {busy && <div className="notice editor-notice">{busy}</div>}
-      {error && <div className="notice error editor-notice">{error}</div>}
+      {error && <div className="notice editor-notice">{error}</div>}
 
       <section className="editor-board" aria-label="Editor workbench">
         <StylePanel
@@ -470,21 +489,11 @@ const EditorWorkspace = ({
           selectedSection={editorSection}
         />
         <PreviewPanel
-          active={active}
           activeTemplateName={activeTemplate?.name ?? active.activeTemplateId}
           artifact={artifact}
           busy={busy}
-          checks={checks}
           cleanCompile={cleanCompile}
           pdfUrl={pdfUrl}
-          selectedSection={editorSection}
-          warningCount={warningCount}
-          onBack={onBack}
-          onCompile={onCompile}
-          onDownloadPdf={onDownloadPdf}
-          onDuplicate={onDuplicate}
-          onExportArchive={onExportArchive}
-          onSelectSection={setSelectedSection}
         />
       </section>
     </main>
@@ -574,14 +583,6 @@ const FitCard = ({ title, value, tone }: { title: string; value: string; tone: '
   </article>
 );
 
-const StatusPill = ({ icon, label, value, tone = 'neutral' }: { icon: ReactNode; label: string; value: string; tone?: 'neutral' | 'good' | 'warn' }) => (
-  <span className={`status-pill ${tone}`}>
-    {icon}
-    <span>{label}</span>
-    <strong>{value}</strong>
-  </span>
-);
-
 const StylePanel = ({
   active,
   onChange,
@@ -599,10 +600,8 @@ const StylePanel = ({
   onSelectModule: (module: LayoutModule) => void;
   onSelectSection: (section: SectionKey) => void;
 }) => {
-  const settings = getSettings(active);
   const usesLayoutModules = hasTemplateAdapter(active.activeTemplateId);
   const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
-  const { size: baseSize, lineHeight } = parseTypo(settings.typography);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [pointerY, setPointerY] = useState<number>(0);
@@ -777,91 +776,6 @@ const StylePanel = ({
             );
           })}
           <button className="add-module"><Plus />Add Module</button>
-        </div>
-      </div>
-
-      <div className="design-card">
-        <div className="design-card-head">
-          <span>Theme Color</span>
-          <button>Custom</button>
-        </div>
-        <div className="swatches" aria-label="Theme colors">
-          {['#111111', '#2f3437', '#62686d', '#8a8f93', '#2457c5', '#b42318', '#ff4b14', '#4f168f', '#16765a'].map((color) => (
-            <span
-              key={color}
-              role="button"
-              tabIndex={0}
-              aria-label={`Theme color ${color}`}
-              style={{ background: color }}
-              className={settings.color === color ? 'selected' : ''}
-              onClick={() => onChange((r) => applySettings(r, { color }))}
-              onKeyDown={(e) => e.key === 'Enter' && onChange((r) => applySettings(r, { color }))}
-            />
-          ))}
-        </div>
-      </div>
-
-      <div className="design-card">
-        <div className="design-card-head"><span>Typography</span></div>
-        <div className="control-row">
-          <span>Base size</span>
-          <div className="stepper-unit">
-            <input
-              type="number"
-              className="stepper"
-              min={10}
-              max={18}
-              step={0.5}
-              value={baseSize}
-              onChange={(e) => onChange((r) => applySettings(r, { typography: `${e.target.value}/${lineHeight}` }))}
-            />
-            <span className="unit">px</span>
-          </div>
-        </div>
-        <div className="control-row">
-          <span>Line height</span>
-          <input
-            type="number"
-            className="stepper"
-            min={1.2}
-            max={2.0}
-            step={0.05}
-            value={lineHeight}
-            onChange={(e) => onChange((r) => applySettings(r, { typography: `${baseSize}/${e.target.value}` }))}
-          />
-        </div>
-      </div>
-
-      <div className="design-card">
-        <div className="design-card-head"><span>Spacing</span></div>
-        <div className="segmented">
-          <button
-            className={settings.spacing === 'compact' ? 'selected' : ''}
-            onClick={() => onChange((r) => applySettings(r, { spacing: 'compact' }))}
-          >
-            Compact
-          </button>
-          <button
-            className={settings.spacing === 'comfortable' ? 'selected' : ''}
-            onClick={() => onChange((r) => applySettings(r, { spacing: 'comfortable' }))}
-          >
-            Comfortable
-          </button>
-        </div>
-        <div className="control-row">
-          <span>Page padding</span>
-          <div className="stepper-unit">
-            <input
-              type="number"
-              className="stepper"
-              min={24}
-              max={72}
-              step={2}
-              value={settings.pagePadding}
-              onChange={(e) => onChange((r) => applySettings(r, { pagePadding: parseInt(e.target.value) }))}
-            />
-            <span className="unit">px</span>
-          </div>
         </div>
       </div>
 
@@ -1163,79 +1077,92 @@ const Field = ({ label, children }: { label: string; children: ReactNode }) => (
 );
 
 const PreviewPanel = ({
-  active,
   activeTemplateName,
   artifact,
   busy,
-  checks,
   cleanCompile,
   pdfUrl,
-  selectedSection,
-  warningCount,
-  onBack,
-  onCompile,
-  onDownloadPdf,
-  onDuplicate,
-  onExportArchive,
-  onSelectSection
 }: {
-  active: ResumeRecord;
   activeTemplateName: string;
   artifact?: CompileArtifact;
   busy: string;
-  checks: ReturnType<typeof runAtsChecks>;
   cleanCompile: boolean;
   pdfUrl: string;
-  selectedSection: SectionKey;
-  warningCount: number;
-  onBack: () => void;
-  onCompile: () => void;
-  onDownloadPdf: () => void;
-  onDuplicate: () => void;
-  onExportArchive: () => void;
-  onSelectSection: (section: SectionKey) => void;
-}) => (
-  <aside className="preview-pane" aria-label="Browser PDF preview">
-    <div className="preview-toolbar" role="toolbar" aria-label="Preview actions">
-      <button aria-label="Layout" title="Layout"><Layers /></button>
-      <button aria-label="Grammar check" title="Grammar check"><Sparkles /></button>
-      <button aria-label="Download PDF" title="Download PDF" disabled={!artifact?.pdfBlob || artifact.status !== 'clean'} onClick={onDownloadPdf}><Download /></button>
-      <button aria-label="Duplicate resume" title="Duplicate resume" onClick={onDuplicate}><Copy /></button>
-      <button aria-label="Collapse panels" title="Collapse panels"><PanelLeftClose /></button>
-      <button aria-label="Home" title="Home" onClick={onBack}><Home /></button>
-      <button aria-label="GitHub help" title="GitHub help"><Github /></button>
-    </div>
-    <div className="preview-head">
-      <div>
-        <span>Live document</span>
-        <strong>{activeTemplateName}</strong>
+}) => {
+  const [showLogs, setShowLogs] = useState(false);
+  const formattedUrl = pdfUrl ? formatPdfPreviewUrl(pdfUrl) : '';
+
+  return (
+    <aside className="preview-pane" aria-label="PDF preview">
+      <div className="preview-toolbar" role="toolbar" aria-label="Preview actions">
+        <button aria-label="Layout" title="Layout"><Layers /></button>
+        <button aria-label="Grammar check" title="Grammar check"><Sparkles /></button>
+        <button aria-label="Download PDF" title="Download PDF"><Download /></button>
+        <button aria-label="Duplicate resume" title="Duplicate resume"><Copy /></button>
+        <button aria-label="Collapse panels" title="Collapse panels"><PanelLeftClose /></button>
+        <button aria-label="Home" title="Home"><Home /></button>
+        <button aria-label="GitHub help" title="GitHub help"><Github /></button>
       </div>
-      <button className="compile-action" onClick={onCompile}><RotateCw />Compile</button>
-    </div>
-    <ResumePaper active={active} selectedSection={selectedSection} onSelectSection={onSelectSection} />
-    <div className="preview-status">
-      <StatusPill icon={<FileCheck2 />} label="Layout" value={activeTemplateName} />
-      <StatusPill icon={<ShieldCheck />} label="ATS" value={warningCount ? `${warningCount} warnings` : 'Clear'} tone={warningCount ? 'warn' : 'good'} />
-      <StatusPill icon={cleanCompile ? <CheckCircle2 /> : <Clock3 />} label="PDF" value={cleanCompile ? 'Clean' : artifact?.status ?? 'Stale'} tone={cleanCompile ? 'good' : 'warn'} />
-    </div>
-    {pdfUrl && <iframe title="PDF preview" src={pdfUrl} />}
-    <section className={`log-block${busy ? ' log-block-busy' : ''}`} aria-label="Compile logs">
-      <h3>Compile logs</h3>
-      {busy ? (
-        <div className="log-block-compiling" aria-live="polite">
-          <Loader2 className="latex-spin" aria-hidden="true" />
-          <span>Compiling in browser…</span>
+      <div className="preview-status">
+        <StatusPill icon={<FileCheck2 />} label="Layout" value={activeTemplateName} />
+        <StatusPill icon={cleanCompile ? <CheckCircle2 /> : <Clock3 />} label="PDF" value={cleanCompile ? 'Clean' : artifact?.status ?? 'Stale'} tone={cleanCompile ? 'good' : 'warn'} />
+      </div>
+
+      {formattedUrl ? (
+        <div className="preview-pdf-wrap">
+          <iframe title="PDF preview" src={formattedUrl} />
+          {busy && (
+            <div className="latex-recompile-overlay" aria-live="polite">
+              <Loader2 className="latex-spin" aria-hidden="true" />
+              <span>Recompiling…</span>
+            </div>
+          )}
         </div>
       ) : (
-        <pre>{artifact?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
+        <div className="latex-paper-placeholder">
+          <FileCheck2 />
+          <h2>{busy ? 'Compiling…' : 'No preview yet'}</h2>
+          {busy ? (
+            <Loader2 className="latex-spin" aria-hidden="true" />
+          ) : (
+            <p>Hit <strong>Compile</strong> or enable <strong>Auto</strong> to generate a live PDF preview.</p>
+          )}
+        </div>
       )}
-    </section>
-    <section className="checks" aria-label="ATS checks">
-      <h3>ATS checks</h3>
-      {checks.map((check) => <p key={check.id} className={check.status}>{check.field}: {check.message}</p>)}
-    </section>
-  </aside>
-);
+
+      <div className={`log-drawer${showLogs ? ' open' : ''}`}>
+        <div className="log-drawer-body-wrap" aria-hidden={!showLogs}>
+          <div className="log-drawer-body">
+            {busy ? (
+              <div className="log-compiling-msg" aria-live="polite">
+                <Loader2 className="latex-spin" aria-hidden="true" />
+                <span>Compiling in browser…</span>
+              </div>
+            ) : (
+              <pre>{artifact?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
+            )}
+          </div>
+        </div>
+        <button
+          className="log-drawer-tab"
+          onClick={() => setShowLogs((v) => !v)}
+          aria-expanded={showLogs}
+          aria-label={showLogs ? 'Hide compile logs' : 'Show compile logs'}
+        >
+          <Terminal className="log-drawer-tab-icon" aria-hidden="true" />
+          <span>Compile Logs</span>
+          {busy && <Loader2 className="latex-spin" aria-hidden="true" />}
+          {!busy && cleanCompile && <CheckCircle2 className="log-status-icon good" aria-hidden="true" />}
+          {!busy && !cleanCompile && artifact && <AlertCircle className="log-status-icon warn" aria-hidden="true" />}
+          <span className="log-status-label">
+            {busy ? 'Compiling…' : cleanCompile ? 'Clean' : artifact ? artifact.status : 'No output'}
+          </span>
+          <ChevronUp className="log-drawer-chevron" aria-hidden="true" />
+        </button>
+      </div>
+    </aside>
+  );
+};
 
 const MiniPaper = ({ resume }: { resume: ResumeRecord }) => (
   <div className="mini-preview" aria-hidden="true">
@@ -1253,126 +1180,6 @@ const MiniPaper = ({ resume }: { resume: ResumeRecord }) => (
   </div>
 );
 
-const ResumePaper = ({
-  active,
-  selectedSection,
-  onSelectSection
-}: {
-  active: ResumeRecord;
-  selectedSection: SectionKey;
-  onSelectSection: (section: SectionKey) => void;
-}) => (
-  <article className="resume-paper" aria-label="Live resume preview">
-    <header
-      className={`paper-header selectable${selectedSection === 'summary' ? ' active' : ''}`}
-      onClick={() => onSelectSection('summary')}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => e.key === 'Enter' && onSelectSection('summary')}
-      aria-label="Edit summary and profile"
-    >
-      <div>
-        <h2>{active.content.profile.fullName || active.title}</h2>
-        <p>{active.content.profile.headline}</p>
-      </div>
-      <div className="paper-contact">
-        {active.content.profile.email && <span><Mail />{active.content.profile.email}</span>}
-        {active.content.profile.phone && <span><Phone />{active.content.profile.phone}</span>}
-        {active.content.profile.location && <span><MapPin />{active.content.profile.location}</span>}
-      </div>
-    </header>
-
-    {!active.hiddenSections.includes('summary') && active.content.summary && (
-      <PaperSection title="Summary" sectionKey="summary" selectedSection={selectedSection} onSelectSection={onSelectSection}>
-        <p>{active.content.summary}</p>
-      </PaperSection>
-    )}
-    {!active.hiddenSections.includes('skills') && active.content.skills.length > 0 && (
-      <PaperSection title="Skills" sectionKey="skills" selectedSection={selectedSection} onSelectSection={onSelectSection}>
-        <ul className="paper-list compact-list">{active.content.skills.map((skill) => <li key={skill}>{skill}</li>)}</ul>
-      </PaperSection>
-    )}
-    {!active.hiddenSections.includes('experience') && (
-      <PaperSection title="Experience" sectionKey="experience" selectedSection={selectedSection} onSelectSection={onSelectSection}>
-        {active.content.experience.map((item) => (
-          <div className="paper-role-block" key={item.id}>
-            <div className="paper-role-head">
-              <strong>{item.company || 'Company'}</strong>
-              <span>{[item.startDate, item.endDate].filter(Boolean).join(' - ')}</span>
-            </div>
-            <div className="paper-role-sub">{item.role}{item.location ? ` · ${item.location}` : ''}</div>
-            <ul className="paper-list">{item.highlights.filter(Boolean).map((highlight) => <li key={highlight}>{highlight}</li>)}</ul>
-          </div>
-        ))}
-      </PaperSection>
-    )}
-    {!active.hiddenSections.includes('education') && active.content.education.length > 0 && (
-      <PaperSection title="Education" sectionKey="education" selectedSection={selectedSection} onSelectSection={onSelectSection}>
-        {active.content.education.map((item) => (
-          <div className="paper-role-block" key={item.id}>
-            <div className="paper-role-head">
-              <strong>{item.school || 'School'}</strong>
-              <span>{[item.startDate, item.endDate].filter(Boolean).join(' - ')}</span>
-            </div>
-            <div className="paper-role-sub">{item.degree}{item.location ? ` · ${item.location}` : ''}</div>
-            <ul className="paper-list">{item.highlights.filter(Boolean).map((h) => <li key={h}>{h}</li>)}</ul>
-          </div>
-        ))}
-      </PaperSection>
-    )}
-    {!active.hiddenSections.includes('projects') && active.content.projects.length > 0 && (
-      <PaperSection title="Projects" sectionKey="projects" selectedSection={selectedSection} onSelectSection={onSelectSection}>
-        {active.content.projects.map((item) => (
-          <div className="paper-role-block" key={item.id}>
-            <strong>{item.name}</strong>
-            <p>{item.description}</p>
-          </div>
-        ))}
-      </PaperSection>
-    )}
-    {!active.hiddenSections.includes('awards') && active.content.awards.length > 0 && (
-      <PaperSection title="Awards" sectionKey="awards" selectedSection={selectedSection} onSelectSection={onSelectSection}>
-        <ul className="paper-list">{active.content.awards.map((a) => <li key={a}>{a}</li>)}</ul>
-      </PaperSection>
-    )}
-    {!active.hiddenSections.includes('customSections') && active.content.customSections.length > 0 && (
-      <PaperSection title="Additional" sectionKey="customSections" selectedSection={selectedSection} onSelectSection={onSelectSection}>
-        {active.content.customSections.map((item) => (
-          <div className="paper-role-block" key={item.id}>
-            <strong>{item.title}</strong>
-            <p>{item.body}</p>
-          </div>
-        ))}
-      </PaperSection>
-    )}
-  </article>
-);
-
-const PaperSection = ({
-  title,
-  children,
-  sectionKey,
-  selectedSection,
-  onSelectSection
-}: {
-  title: string;
-  children: ReactNode;
-  sectionKey: SectionKey;
-  selectedSection: SectionKey;
-  onSelectSection: (section: SectionKey) => void;
-}) => (
-  <section
-    className={`paper-content-section selectable${selectedSection === sectionKey ? ' active' : ''}`}
-    onClick={() => onSelectSection(sectionKey)}
-    role="button"
-    tabIndex={0}
-    onKeyDown={(e) => e.key === 'Enter' && onSelectSection(sectionKey)}
-    aria-label={`Edit ${title}`}
-  >
-    <h3>{title}</h3>
-    {children}
-  </section>
-);
 
 const editField = (resume: ResumeRecord, field: string, update: (resume: ResumeRecord) => ResumeRecord) => {
   const updated = update(resume);
@@ -1428,13 +1235,4 @@ const formatRelative = (date: string) => {
   if (days === 0) return 'today';
   if (days === 1) return 'yesterday';
   return `${days}d ago`;
-};
-
-const downloadBlob = (blob: Blob, name: string) => {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(url);
 };

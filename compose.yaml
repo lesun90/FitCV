@@ -12,6 +12,8 @@ services:
     volumes:
       - .:/app
       - fitcv_node_modules:/app/node_modules
+      - fitcv_busytex:/app/public/core/busytex
 
 volumes:
   fitcv_node_modules:
+  fitcv_busytex:

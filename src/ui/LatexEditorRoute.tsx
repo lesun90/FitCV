@@ -15,6 +15,7 @@ import {
   Play,
   Zap
 } from 'lucide-react';
+import { downloadBlob, StatusPill } from './shared';
 import { buildLatexFileTree, type LatexFileTreeNode, type LatexProjectFile } from '../domain/latexProject';
 import {
   busyTexLicenseReview,
@@ -419,21 +420,4 @@ const CompilerStatusPanel = ({
   );
 };
 
-const StatusPill = ({ icon, label, value, tone = 'neutral' }: { icon: ReactNode; label: string; value: string; tone?: 'neutral' | 'good' | 'warn' }) => (
-  <span className={`status-pill ${tone}`}>
-    {icon}
-    <span>{label}</span>
-    <strong>{value}</strong>
-  </span>
-);
-
 const formatCacheState = (state: string) => state.replaceAll('-', ' ');
-
-const downloadBlob = (blob: Blob, name: string) => {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(url);
-};
