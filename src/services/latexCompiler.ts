@@ -1,5 +1,5 @@
 import type { LatexProjectFile } from '../domain/latexProject';
-import { BusyTexRunner, LuaLatex, PdfLatex, XeLatex, type CompileResult, type FileInput } from 'texlyre-busytex';
+import { BusyTexRunner, isPackageCached, LuaLatex, PdfLatex, XeLatex, type CompileResult, type FileInput } from 'texlyre-busytex';
 
 export type LatexCompilerEngine = 'xelatex' | 'pdflatex' | 'lualatex';
 export type LatexCompilerCacheState = 'not-ready' | 'downloading' | 'cached' | 'offline-ready' | 'download-failed';
@@ -30,7 +30,21 @@ export const busyTexLicenseReview = {
     'AGPL obligations are accepted for the browser-side BusyTeX wrapper. Runtime assets are loaded from the configured BusyTeX asset base path.'
 };
 
-export const getLatexCompilerCacheState = (): LatexCompilerCacheState => 'not-ready';
+export const checkLatexCompilerCacheState = async (): Promise<LatexCompilerCacheState> => {
+  try {
+    const basePath = (import.meta.env.VITE_BUSYTEX_BASE_PATH ?? '/core/busytex').replace(/\/$/, '');
+    const [basic, recommended, extra] = await Promise.all([
+      isPackageCached(`${basePath}/texlive-basic.js`),
+      isPackageCached(`${basePath}/texlive-recommended.js`),
+      isPackageCached(`${basePath}/texlive-extra.js`)
+    ]);
+    if (!basic) return 'not-ready';
+    if (recommended && extra) return 'offline-ready';
+    return 'cached';
+  } catch {
+    return 'not-ready';
+  }
+};
 
 export const compileLatexProject = async (request: LatexCompileRequest): Promise<LatexCompileResult> => {
   const started = performance.now();
@@ -39,7 +53,7 @@ export const compileLatexProject = async (request: LatexCompileRequest): Promise
   if (!mainFile) {
     return {
       status: 'failed',
-      cacheState: getLatexCompilerCacheState(),
+      cacheState: 'not-ready',
       diagnostics: [`Main file "${request.mainFile}" was not found in the project.`],
       logs: [`Compile failed before BusyTeX startup: main file "${request.mainFile}" was missing.`],
       elapsedMs: Math.round(performance.now() - started)
@@ -59,7 +73,7 @@ export const compileLatexProject = async (request: LatexCompileRequest): Promise
       status: result.success ? 'success' : 'failed',
       pdfBlob: result.pdf ? toPdfBlob(result.pdf) : undefined,
       cacheState: 'cached',
-      diagnostics: result.success ? [] : [`BusyTeX exited with code ${result.exitCode}.`],
+      diagnostics: result.success ? [] : (extractLatexErrors(result.log ?? '').length ? extractLatexErrors(result.log ?? '') : [`BusyTeX exited with code ${result.exitCode}.`]),
       logs: flattenBusyTexLogs(result),
       elapsedMs: Math.round(performance.now() - started)
     };
@@ -67,7 +81,7 @@ export const compileLatexProject = async (request: LatexCompileRequest): Promise
     const message = caught instanceof Error ? caught.message : 'BusyTeX compile failed.';
     return {
       status: 'failed',
-      cacheState: message.toLowerCase().includes('download') || message.toLowerCase().includes('fetch') ? 'download-failed' : getLatexCompilerCacheState(),
+      cacheState: message.toLowerCase().includes('download') || message.toLowerCase().includes('fetch') ? 'download-failed' : 'not-ready',
       diagnostics: [message],
       logs: [
         `Compile requested for ${request.mainFile} with ${request.engine}.`,
@@ -106,15 +120,23 @@ const toBusyTexFile = (file: LatexProjectFile): FileInput => {
   return { path: file.path, content: file.data };
 };
 
-const flattenBusyTexLogs = (result: CompileResult) => {
-  const logs = [
-    `BusyTeX exit code: ${result.exitCode}`,
-    result.log,
-    ...(result.logs ?? []).flatMap((entry) =>
-      [entry.cmd, entry.stdout, entry.stderr, entry.log, entry.texmflog, entry.missfontlog, entry.aux].filter(Boolean)
-    )
-  ].filter(Boolean);
+const extractLatexErrors = (log: string): string[] => {
+  const errors: string[] = [];
+  const lines = log.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('! ')) {
+      errors.push(lines[i]);
+      if (i + 1 < lines.length && lines[i + 1].startsWith('l.')) errors.push(lines[i + 1]);
+    }
+  }
+  return errors;
+};
 
+const flattenBusyTexLogs = (result: CompileResult) => {
+  const runLogs = (result.logs ?? []).flatMap((entry) =>
+    [entry.cmd, entry.stdout, entry.stderr, entry.log, entry.missfontlog, entry.aux].filter(Boolean)
+  );
+  const logs = [`BusyTeX exit code: ${result.exitCode}`, ...runLogs, result.log].filter(Boolean);
   return logs.length ? logs : ['BusyTeX finished without logs.'];
 };
 

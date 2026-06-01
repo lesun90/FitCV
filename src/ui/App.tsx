@@ -44,7 +44,7 @@ import { runAtsChecks } from '../domain/checks';
 import { createResume, duplicateResume, renameResume, sampleResume, switchTemplate, touchResume } from '../domain/resume';
 import { analyzeTemplateCompatibility, templates } from '../domain/templates';
 import type { CompileArtifact, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from '../domain/types';
-import { busyTexLicenseReview, compileLatexProject, getLatexCompilerCacheState, type LatexCompileResult, type LatexCompilerEngine } from '../services/latexCompiler';
+import { busyTexLicenseReview, checkLatexCompilerCacheState, compileLatexProject, type LatexCompileResult, type LatexCompilerCacheState, type LatexCompilerEngine } from '../services/latexCompiler';
 import { listBundledLatexProjects, loadBundledLatexProject, type BundledLatexProject, type BundledLatexProjectSummary } from '../services/latexTemplates';
 import { storage } from '../services/storage';
 
@@ -64,6 +64,8 @@ type LatexProjectState = BundledLatexProject & {
   mainFile: string;
   workingFiles: LatexProjectFile[];
 };
+
+import { formatPdfPreviewUrl, highlightLatexSource } from './latexUtils';
 
 const getSettings = (resume: ResumeRecord): TemplateSettings => {
   const defaults: TemplateSettings = { color: '#111111', typography: '16/1.5', spacing: 'comfortable', pagePadding: 49 };
@@ -243,7 +245,13 @@ const LatexEditorRoute = () => {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [engine, setEngine] = useState<LatexCompilerEngine>('xelatex');
+  const [cacheState, setCacheState] = useState<LatexCompilerCacheState>('not-ready');
+  const [showLogs, setShowLogs] = useState(false);
   const bundledProjects = useMemo(() => listBundledLatexProjects(), []);
+
+  useEffect(() => {
+    checkLatexCompilerCacheState().then(setCacheState);
+  }, []);
 
   const activeFile = project?.workingFiles.find((file) => file.path === project.activePath);
   const textFiles = project?.workingFiles.filter((file): file is Extract<LatexProjectFile, { kind: 'text' }> => file.kind === 'text') ?? [];
@@ -282,6 +290,8 @@ const LatexEditorRoute = () => {
     setBusy('Preparing browser compile');
     setCompileResult(await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine }));
     setBusy('');
+    setShowLogs(true);
+    checkLatexCompilerCacheState().then(setCacheState);
   };
 
   return (
@@ -315,14 +325,14 @@ const LatexEditorRoute = () => {
               <option value="lualatex">LuaTeX</option>
             </select>
           </label>
-          <StatusPill icon={<LockKeyhole />} label="Compiler" value={formatCacheState(getLatexCompilerCacheState())} tone="warn" />
+          <StatusPill icon={<LockKeyhole />} label="Compiler" value={formatCacheState(cacheState)} tone="warn" />
           <button className="chrome-button" disabled={!project || Boolean(busy)} onClick={compileProject}><Play />Compile</button>
           <button className="chrome-button primary" disabled={!compileResult?.pdfBlob} onClick={() => compileResult?.pdfBlob && downloadBlob(compileResult.pdfBlob, `${project?.displayName ?? 'latex-project'}.pdf`)}><Download />PDF</button>
         </div>
       </header>
 
       {!project ? (
-        <LatexLauncher busy={busy} error={error} projects={bundledProjects} onOpenProject={openBundledProject} />
+        <LatexLauncher busy={busy} error={error} projects={bundledProjects} cacheState={cacheState} onOpenProject={openBundledProject} />
       ) : (
         <section className="latex-workbench" aria-label="LaTeX editor workbench">
           <aside className="latex-file-panel" aria-label="LaTeX file tree">
@@ -346,12 +356,11 @@ const LatexEditorRoute = () => {
               <span>{activeFile?.kind === 'text' ? 'Source' : 'Binary asset'}</span>
             </div>
             {activeFile?.kind === 'text' ? (
-              <textarea
-                className="latex-code-editor"
-                value={activeFile.contents}
+              <LatexCodeEditor
+                contents={activeFile.contents}
                 readOnly={project.readOnly}
-                onChange={(event) => updateActiveFile(event.target.value)}
-                aria-label={`Editing ${activeFile.path}`}
+                activePath={activeFile.path}
+                onChange={updateActiveFile}
               />
             ) : (
               <div className="latex-empty-editor">
@@ -365,7 +374,7 @@ const LatexEditorRoute = () => {
           <aside className="latex-preview-pane" aria-label="LaTeX PDF preview and logs">
             <div className="latex-preview-paper">
               {latexPdfUrl ? (
-                <iframe title="LaTeX PDF preview" src={latexPdfUrl} />
+                <iframe title="LaTeX PDF preview" src={formatPdfPreviewUrl(latexPdfUrl)} />
               ) : (
                 <div className="latex-paper-placeholder">
                   <Braces />
@@ -374,7 +383,7 @@ const LatexEditorRoute = () => {
                 </div>
               )}
             </div>
-            <CompilerStatusPanel result={compileResult} busy={busy} />
+            <CompilerStatusPanel result={compileResult} busy={busy} cacheState={cacheState} showLogs={showLogs} onToggleLogs={() => setShowLogs((v) => !v)} />
           </aside>
         </section>
       )}
@@ -382,13 +391,49 @@ const LatexEditorRoute = () => {
   );
 };
 
+const LatexCodeEditor = ({
+  activePath,
+  contents,
+  readOnly,
+  onChange
+}: {
+  activePath: string;
+  contents: string;
+  readOnly: boolean;
+  onChange: (contents: string) => void;
+}) => {
+  const highlightRef = useRef<HTMLPreElement>(null);
+
+  return (
+    <div className="latex-code-frame">
+      <pre className="latex-code-highlight" ref={highlightRef} aria-hidden="true">
+        {highlightLatexSource(contents)}
+      </pre>
+      <textarea
+        className="latex-code-editor"
+        value={contents}
+        readOnly={readOnly}
+        spellCheck={false}
+        onScroll={(event) => {
+          if (!highlightRef.current) return;
+          highlightRef.current.style.transform = `translate(${-event.currentTarget.scrollLeft}px, ${-event.currentTarget.scrollTop}px)`;
+        }}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label={`Editing ${activePath}`}
+      />
+    </div>
+  );
+};
+
 const LatexLauncher = ({
   busy,
+  cacheState,
   error,
   projects,
   onOpenProject
 }: {
   busy: string;
+  cacheState: LatexCompilerCacheState;
   error: string;
   projects: BundledLatexProjectSummary[];
   onOpenProject: (id: string) => void;
@@ -422,7 +467,7 @@ const LatexLauncher = ({
       <p>{busyTexLicenseReview.packageName}@{busyTexLicenseReview.version} is enabled under {busyTexLicenseReview.license}. BusyTeX runtime assets are expected at the configured asset base path and project source still stays in the browser.</p>
       <dl>
         <div><dt>Source privacy</dt><dd>User project files stay in the browser.</dd></div>
-        <div><dt>Asset cache</dt><dd>{formatCacheState(getLatexCompilerCacheState())}</dd></div>
+        <div><dt>Asset cache</dt><dd>{formatCacheState(cacheState)}</dd></div>
         <div><dt>Default engine</dt><dd>XeTeX-ready boundary</dd></div>
       </dl>
     </aside>
@@ -465,21 +510,42 @@ const LatexFileTreeItem = ({ node, activePath, onOpen }: { node: LatexFileTreeNo
   );
 };
 
-const CompilerStatusPanel = ({ result, busy }: { result?: LatexCompileResult; busy: string }) => (
-  <section className="latex-compiler-panel" aria-label="Compiler and logs">
+const CompilerStatusPanel = ({
+  result,
+  busy,
+  cacheState,
+  showLogs,
+  onToggleLogs
+}: {
+  result?: LatexCompileResult;
+  busy: string;
+  cacheState: LatexCompilerCacheState;
+  showLogs: boolean;
+  onToggleLogs: () => void;
+}) => (
+  <section className={`latex-compiler-panel${showLogs ? ' expanded' : ''}`} aria-label="Compiler and logs">
     <div className="latex-panel-head">
       <div>
         <span>Compile logs</span>
         <strong>{busy || result?.status || 'Not run'}</strong>
       </div>
-      <StatusPill icon={<Clock3 />} label="Cache" value={formatCacheState(result?.cacheState ?? getLatexCompilerCacheState())} tone="warn" />
-    </div>
-    <pre>{result?.logs.join('\n') ?? 'No compile has run yet. Source files remain local; BusyTeX runtime and package requests may go to the configured static asset host.'}</pre>
-    {result?.diagnostics.length ? (
-      <div className="latex-diagnostics">
-        {result.diagnostics.map((diagnostic) => <p key={diagnostic}>{diagnostic}</p>)}
+      <div className="latex-panel-head-actions">
+        <StatusPill icon={<Clock3 />} label="Cache" value={formatCacheState(result?.cacheState ?? cacheState)} tone="warn" />
+        <button className="chrome-button icon-only" onClick={onToggleLogs} aria-label={showLogs ? 'Hide logs' : 'Show logs'}>
+          {showLogs ? <EyeOff /> : <Eye />}
+        </button>
       </div>
-    ) : null}
+    </div>
+    {showLogs && (
+      <>
+        <pre className="latex-log-output">{result?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
+        {result?.diagnostics.length ? (
+          <div className="latex-diagnostics">
+            {result.diagnostics.map((diagnostic) => <p key={diagnostic}>{diagnostic}</p>)}
+          </div>
+        ) : null}
+      </>
+    )}
   </section>
 );
 

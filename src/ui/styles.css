@@ -335,8 +335,8 @@ p {
   border-right: 1px solid var(--line);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 14px;
-  padding: 16px 14px;
+  gap: 6px;
+  padding: 10px 8px;
 }
 
 .latex-panel-head {
@@ -389,13 +389,13 @@ p {
 
 .latex-file-tree {
   display: grid;
-  gap: 4px;
+  gap: 1px;
   overflow: auto;
 }
 
 .latex-file-tree details {
   display: grid;
-  gap: 4px;
+  gap: 1px;
 }
 
 .latex-file-tree summary,
@@ -404,10 +404,10 @@ p {
   border-radius: 7px;
   color: var(--muted);
   display: flex;
-  font-size: 13px;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 8px;
+  font-size: 12px;
+  gap: 6px;
+  min-height: 22px;
+  padding: 0 5px;
 }
 
 .latex-file-tree summary {
@@ -417,16 +417,16 @@ p {
 
 .latex-file-tree summary svg,
 .latex-file svg {
-  height: 15px;
-  width: 15px;
+  height: 13px;
+  width: 13px;
 }
 
 .latex-folder-children {
   border-left: 1px solid var(--line);
   display: grid;
-  gap: 4px;
-  margin-left: 12px;
-  padding-left: 8px;
+  gap: 1px;
+  margin-left: 9px;
+  padding-left: 6px;
 }
 
 .latex-file {
@@ -502,18 +502,76 @@ p {
   margin-left: auto;
 }
 
-.latex-code-editor {
+.latex-code-frame {
   background: #fffdf9;
+  min-height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.latex-code-highlight,
+.latex-code-editor {
   border: 0;
   border-radius: 0;
-  color: #1d252c;
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   font-size: 13px;
   line-height: 1.55;
+  margin: 0;
   min-height: 100%;
-  outline-offset: -3px;
   padding: 18px 20px 48px;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.latex-code-highlight {
+  background: transparent;
+  color: #1d252c;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  width: 100%;
+}
+
+.latex-code-editor {
+  background: transparent;
+  caret-color: #1d252c;
+  color: transparent;
+  min-width: 100%;
+  outline-offset: -3px;
+  position: absolute;
   resize: none;
+  inset: 0;
+}
+
+.latex-code-editor::selection {
+  background: rgba(47, 107, 183, 0.24);
+  color: transparent;
+}
+
+.latex-syntax-command {
+  color: #1f64b6;
+  font-weight: 650;
+}
+
+.latex-syntax-brace {
+  color: #a44712;
+  font-weight: 720;
+}
+
+.latex-syntax-comment {
+  color: #6f7d55;
+  font-style: italic;
+}
+
+.latex-syntax-math {
+  color: #7c3f99;
+  font-weight: 700;
+}
+
+.latex-syntax-marker {
+  color: #9a5a00;
 }
 
 .latex-empty-editor {
@@ -538,25 +596,26 @@ p {
 }
 
 .latex-preview-pane {
-  align-content: start;
   background: linear-gradient(180deg, #efefed, #e7e6e1);
-  display: grid;
-  gap: 16px;
-  max-height: calc(100dvh - 62px);
-  overflow: auto;
-  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 62px);
+  overflow: hidden;
 }
 
 .latex-preview-paper {
   background: #fff;
-  box-shadow:
-    0 1px 0 rgba(27, 27, 24, 0.08),
-    0 24px 56px rgba(27, 27, 24, 0.14);
   display: grid;
-  justify-self: center;
-  min-height: min(820px, calc(100dvh - 250px));
+  flex: 1;
+  min-height: 0;
   place-items: center;
-  width: min(100%, 680px);
+  width: 100%;
+}
+
+.latex-preview-paper iframe {
+  border: 0;
+  height: 100%;
+  width: 100%;
 }
 
 .latex-paper-placeholder {
@@ -589,14 +648,28 @@ p {
 }
 
 .latex-compiler-panel {
-  background: rgba(255, 255, 255, 0.84);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  border-top: 1px solid var(--line);
   display: grid;
-  gap: 12px;
-  justify-self: center;
-  padding: 12px;
-  width: min(100%, 680px);
+  flex-shrink: 0;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+.latex-panel-head-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.latex-log-output {
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .latex-diagnostics {
@@ -2036,7 +2109,7 @@ pre {
 
   .latex-preview-pane {
     grid-column: 1 / -1;
-    max-height: none;
+    height: auto;
   }
 }
 
@@ -2172,7 +2245,8 @@ pre {
   }
 
   .latex-preview-pane {
-    padding: 16px;
+    height: auto;
+    min-height: 480px;
   }
 }
 
