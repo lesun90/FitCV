@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { clearReviewMarkersForField, createResume, duplicateResume, renameResume } from './resume';
 
 describe('resume model', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('creates a normalized resume with template settings kept separate from content', () => {
     const resume = createResume('Base Resume', 'classic-ats');
 
@@ -10,6 +14,19 @@ describe('resume model', () => {
     expect(resume.content.profile.fullName).toBe('');
     expect(resume.templateSettings['classic-ats']).toBeDefined();
     expect(resume.schemaVersion).toBe(1);
+  });
+
+  it('creates IDs when randomUUID is unavailable', () => {
+    vi.stubGlobal('crypto', {
+      getRandomValues: (array: Uint8Array) => {
+        array.fill(7);
+        return array;
+      }
+    });
+
+    const resume = createResume('Base Resume', 'classic-ats');
+
+    expect(resume.id).toMatch(/^resume-[0-9a-f-]{36}$/);
   });
 
   it('duplicates resumes without sharing identity or timestamps', () => {
