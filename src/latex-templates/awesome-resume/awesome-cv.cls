@@ -221,8 +221,7 @@
 %-------------------------------------------------------------------------------
 % Configure styles for each CV elements
 % For fundamental structures
-\newcommand*{\headerfirstnamestyle}[1]{{\fontsize{32pt}{1em}\headerfontlight\color{darktext} #1}}
-\newcommand*{\headerlastnamestyle}[1]{{\fontsize{32pt}{1em}\headerfont\bfseries\color{darktext} #1}}
+\newcommand*{\headernamestyle}[1]{{\fontsize{32pt}{1em}\headerfont\color{graytext} #1}}
 \newcommand*{\headerpositionstyle}[1]{{\fontsize{7.6pt}{1em}\bodyfont\scshape\color{awesome} #1}}
 \newcommand*{\headeraddressstyle}[1]{{\fontsize{9pt}{1em}\headerfont\itshape\color{graytext} #1}}
 \newcommand*{\headersocialstyle}[1]{{\fontsize{9pt}{1em}\headerfont\color{text} #1}}
@@ -392,11 +391,7 @@
 % Usage: \makecvheader
 \newcommand*{\makecvheader}{
   \begin{center}
-    \headerfirstnamestyle{
-      \@firstname
-    } \headerlastnamestyle{
-      \@lastname
-    }
+    \headernamestyle{\@firstname\ \@lastname}
     \\
     \vspace{0.4mm}
     \ifthenelse{\isundefined{\@position}}{}{\headerpositionstyle{\@position\\}}
@@ -484,7 +479,7 @@
         }
     } \\
     \ifthenelse{\isundefined{\@quote}}
-      {}
+      {\vspace{4.0mm}}
       {\vspace{6.0mm}\headerquotestyle{\@quote\\}\vspace{5.0mm}}
   \end{center}
 }

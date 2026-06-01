@@ -22,6 +22,7 @@ import {
   GripVertical,
   Home,
   Layers,
+  Loader2,
   LockKeyhole,
   Mail,
   MapPin,
@@ -288,9 +289,9 @@ const LatexEditorRoute = () => {
   const compileProject = async () => {
     if (!project?.mainFile) return;
     setBusy('Preparing browser compile');
+    setShowLogs(true);
     setCompileResult(await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine }));
     setBusy('');
-    setShowLogs(true);
     checkLatexCompilerCacheState().then(setCacheState);
   };
 
@@ -522,32 +523,74 @@ const CompilerStatusPanel = ({
   cacheState: LatexCompilerCacheState;
   showLogs: boolean;
   onToggleLogs: () => void;
-}) => (
-  <section className={`latex-compiler-panel${showLogs ? ' expanded' : ''}`} aria-label="Compiler and logs">
-    <div className="latex-panel-head">
-      <div>
-        <span>Compile logs</span>
-        <strong>{busy || result?.status || 'Not run'}</strong>
-      </div>
-      <div className="latex-panel-head-actions">
-        <StatusPill icon={<Clock3 />} label="Cache" value={formatCacheState(result?.cacheState ?? cacheState)} tone="warn" />
-        <button className="chrome-button icon-only" onClick={onToggleLogs} aria-label={showLogs ? 'Hide logs' : 'Show logs'}>
-          {showLogs ? <EyeOff /> : <Eye />}
-        </button>
-      </div>
-    </div>
-    {showLogs && (
-      <>
-        <pre className="latex-log-output">{result?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
-        {result?.diagnostics.length ? (
-          <div className="latex-diagnostics">
-            {result.diagnostics.map((diagnostic) => <p key={diagnostic}>{diagnostic}</p>)}
+}) => {
+  const [showFullLog, setShowFullLog] = useState(false);
+  const hasDiagnostics = (result?.diagnostics.length ?? 0) > 0;
+  const statusLabel = busy
+    ? 'Compiling…'
+    : result
+      ? `${result.status} · ${result.elapsedMs}ms`
+      : 'Not run';
+  const panelClass = [
+    'latex-compiler-panel',
+    showLogs ? 'expanded' : '',
+    busy ? 'busy' : result?.status === 'success' ? 'status-success' : result?.status === 'failed' ? 'status-failed' : ''
+  ].filter(Boolean).join(' ');
+
+  return (
+    <section className={panelClass} aria-label="Compiler and logs">
+      <div className="latex-panel-head">
+        <div className="latex-panel-status-group">
+          {busy ? (
+            <Loader2 className="latex-spin" aria-hidden="true" />
+          ) : result?.status === 'success' ? (
+            <CheckCircle2 className="latex-status-icon good" aria-hidden="true" />
+          ) : result?.status === 'failed' ? (
+            <AlertTriangle className="latex-status-icon error" aria-hidden="true" />
+          ) : null}
+          <div>
+            <span>Compile logs</span>
+            <strong>{statusLabel}</strong>
           </div>
-        ) : null}
-      </>
-    )}
-  </section>
-);
+        </div>
+        <div className="latex-panel-head-actions">
+          <StatusPill icon={<Clock3 />} label="Cache" value={formatCacheState(result?.cacheState ?? cacheState)} tone="warn" />
+          <button className="chrome-button icon-only" onClick={onToggleLogs} aria-label={showLogs ? 'Hide logs' : 'Show logs'}>
+            {showLogs ? <EyeOff /> : <Eye />}
+          </button>
+        </div>
+      </div>
+
+      {busy && <div className="latex-compile-progress-bar" role="progressbar" aria-label="Compiling" />}
+
+      <div className={`latex-log-body${showLogs ? ' expanded' : ''}`}>
+        <div className="latex-log-body-inner">
+          {busy ? (
+            <div className="latex-log-compiling" aria-live="polite">
+              <Loader2 className="latex-spin" aria-hidden="true" />
+              <span>Compiler running in browser…</span>
+            </div>
+          ) : (
+            <>
+              {hasDiagnostics && !showFullLog ? (
+                <div className="latex-diagnostics">
+                  {result!.diagnostics.map((d) => <p key={d}>{d}</p>)}
+                </div>
+              ) : (
+                <pre className="latex-log-output">{result?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
+              )}
+              {hasDiagnostics && (
+                <button className="latex-log-toggle" onClick={() => setShowFullLog((v) => !v)}>
+                  {showFullLog ? 'Show errors only' : 'Show full log'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+};
 
 const formatCacheState = (state: string) => state.replaceAll('-', ' ');
 
@@ -730,6 +773,7 @@ const EditorWorkspace = ({
           active={active}
           activeTemplateName={activeTemplate?.name ?? active.activeTemplateId}
           artifact={artifact}
+          busy={busy}
           checks={checks}
           cleanCompile={cleanCompile}
           pdfUrl={pdfUrl}
@@ -1329,6 +1373,7 @@ const PreviewPanel = ({
   active,
   activeTemplateName,
   artifact,
+  busy,
   checks,
   cleanCompile,
   pdfUrl,
@@ -1344,6 +1389,7 @@ const PreviewPanel = ({
   active: ResumeRecord;
   activeTemplateName: string;
   artifact?: CompileArtifact;
+  busy: string;
   checks: ReturnType<typeof runAtsChecks>;
   cleanCompile: boolean;
   pdfUrl: string;
@@ -1380,9 +1426,16 @@ const PreviewPanel = ({
       <StatusPill icon={cleanCompile ? <CheckCircle2 /> : <Clock3 />} label="PDF" value={cleanCompile ? 'Clean' : artifact?.status ?? 'Stale'} tone={cleanCompile ? 'good' : 'warn'} />
     </div>
     {pdfUrl && <iframe title="PDF preview" src={pdfUrl} />}
-    <section className="log-block" aria-label="Compile logs">
+    <section className={`log-block${busy ? ' log-block-busy' : ''}`} aria-label="Compile logs">
       <h3>Compile logs</h3>
-      <pre>{artifact?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
+      {busy ? (
+        <div className="log-block-compiling" aria-live="polite">
+          <Loader2 className="latex-spin" aria-hidden="true" />
+          <span>Compiling in browser…</span>
+        </div>
+      ) : (
+        <pre>{artifact?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
+      )}
     </section>
     <section className="checks" aria-label="ATS checks">
       <h3>ATS checks</h3>
