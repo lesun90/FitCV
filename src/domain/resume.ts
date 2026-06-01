@@ -1,0 +1,125 @@
+import type { ResumeContent, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from './types';
+
+const sectionOrder: SectionKey[] = ['summary', 'experience', 'education', 'projects', 'skills', 'awards', 'customSections'];
+
+let lastTimestamp = 0;
+const now = () => {
+  lastTimestamp = Math.max(Date.now(), lastTimestamp + 1);
+  return new Date(lastTimestamp).toISOString();
+};
+const id = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
+
+export const defaultTemplateSettings = (templateId: TemplateId): TemplateSettings => ({
+  color: templateId === 'classic-ats' ? '#143d3a' : '#3949ab',
+  typography: templateId === 'classic-ats' ? 'Literata' : 'Aptos',
+  spacing: 'comfortable',
+  pagePadding: 42
+});
+
+export const emptyContent = (): ResumeContent => ({
+  profile: {
+    fullName: '',
+    headline: '',
+    email: '',
+    phone: '',
+    location: '',
+    links: []
+  },
+  summary: '',
+  experience: [],
+  education: [],
+  projects: [],
+  skills: [],
+  awards: [],
+  customSections: []
+});
+
+export const sampleResume = (): ResumeRecord => {
+  const resume = createResume('Ada Lovelace - Sample Resume', 'classic-ats');
+  resume.content.profile = {
+    fullName: 'Ada Lovelace',
+    headline: 'Computing pioneer and analytical engine collaborator',
+    email: 'ada@example.com',
+    phone: '+1 555 0142',
+    location: 'London, UK',
+    links: ['linkedin.com/in/ada', 'github.com/ada']
+  };
+  resume.content.summary = 'Structured technical leader who turns ambiguous systems into readable, durable programs.';
+  resume.content.experience.push({
+    id: id('exp'),
+    company: 'Analytical Engine Lab',
+    role: 'Principal Systems Analyst',
+    location: 'London, UK',
+    startDate: '1842',
+    endDate: 'Present',
+    highlights: ['Translated complex requirements into executable notation', 'Documented reusable methods for future operators']
+  });
+  resume.content.education.push({
+    id: id('edu'),
+    school: 'Independent Study',
+    degree: 'Mathematics and Logic',
+    location: 'London, UK',
+    startDate: '1832',
+    endDate: '1842',
+    highlights: ['Studied symbolic reasoning, mechanics, and mathematical proof']
+  });
+  resume.content.projects.push({
+    id: id('project'),
+    name: 'Notes on the Analytical Engine',
+    description: 'Technical writing and algorithms for a general-purpose computing machine.',
+    highlights: ['Outlined a repeatable calculation process', 'Preserved context for future readers'],
+    links: []
+  });
+  resume.content.skills = ['Systems thinking', 'Technical writing', 'Mathematics', 'Algorithm design'];
+  resume.content.awards = ['First programmer, widely recognized'];
+  resume.version = 2;
+  return resume;
+};
+
+export const createResume = (title: string, templateId: TemplateId): ResumeRecord => {
+  const timestamp = now();
+  return {
+    id: id('resume'),
+    schemaVersion: 1,
+    title,
+    activeTemplateId: templateId,
+    sectionOrder,
+    hiddenSections: [],
+    content: emptyContent(),
+    templateSettings: {
+      [templateId]: defaultTemplateSettings(templateId)
+    },
+    reviewMarkers: [],
+    importNotes: [],
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    version: 1
+  };
+};
+
+export const touchResume = (resume: ResumeRecord): ResumeRecord => ({
+  ...resume,
+  updatedAt: now(),
+  version: resume.version + 1
+});
+
+export const duplicateResume = (resume: ResumeRecord): ResumeRecord => {
+  const timestamp = now();
+  return {
+    ...structuredClone(resume),
+    id: id('resume'),
+    title: `${resume.title} copy`,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    version: resume.version + 1
+  };
+};
+
+export const renameResume = (resume: ResumeRecord, title: string): ResumeRecord => touchResume({ ...resume, title });
+
+export const switchTemplate = (resume: ResumeRecord, templateId: TemplateId): ResumeRecord => {
+  const next = structuredClone(resume);
+  next.activeTemplateId = templateId;
+  next.templateSettings[templateId] ??= defaultTemplateSettings(templateId);
+  return touchResume(next);
+};

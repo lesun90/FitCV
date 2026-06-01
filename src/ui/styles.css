@@ -871,6 +871,8 @@ p {
   grid-template-columns: 14px 1fr 28px;
   min-height: 42px;
   padding: 0 6px 0 8px;
+  transition: transform 200ms cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 150ms ease, box-shadow 150ms ease;
+  will-change: transform;
 }
 
 .module-row.selected {
@@ -884,8 +886,20 @@ p {
 
 .module-row > svg {
   color: var(--faint);
+  cursor: grab;
   height: 14px;
+  touch-action: none;
   width: 14px;
+}
+
+.module-row.dragging {
+  border-color: var(--line-strong);
+}
+
+.module-list.is-dragging,
+.module-list.is-dragging * {
+  cursor: grabbing !important;
+  user-select: none;
 }
 
 .module-select-btn {
@@ -1086,6 +1100,7 @@ p {
 }
 
 .editor {
+  align-content: start;
   display: grid;
   gap: 14px;
   max-height: calc(100dvh - 64px);
@@ -1113,6 +1128,7 @@ p {
 }
 
 .field-grid {
+  align-items: start;
   display: grid;
   gap: 12px;
   grid-template-columns: 1fr;
@@ -1253,11 +1269,16 @@ p {
     linear-gradient(180deg, #efefed, #e7e6e1);
   border-left: 1px solid var(--line);
   display: grid;
+  grid-template-columns: 1fr auto;
   gap: 16px;
   max-height: calc(100dvh - 64px);
   overflow: auto;
-  padding: 18px 62px 42px;
+  padding: 18px 0 42px 62px;
   position: relative;
+}
+
+.preview-pane > *:not(.preview-toolbar) {
+  grid-column: 1;
 }
 
 .preview-head {
@@ -1290,11 +1311,12 @@ p {
 .preview-toolbar {
   display: grid;
   gap: 7px;
+  grid-column: 2;
+  grid-row: 1 / span 20;
   position: sticky;
-  right: 16px;
   top: 16px;
   align-self: start;
-  justify-self: end;
+  padding-right: 16px;
   z-index: 10;
 }
 
@@ -1597,9 +1619,16 @@ pre {
     padding: 16px;
   }
 
+  .preview-pane {
+    grid-template-columns: 1fr;
+  }
+
   .preview-toolbar {
     display: flex;
     position: static;
+    grid-column: 1;
+    grid-row: auto;
+    padding-right: 0;
   }
 
   .resume-paper {

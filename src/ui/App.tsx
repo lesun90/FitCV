@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlignCenter,
   AlignLeft,
@@ -38,8 +38,6 @@ import { createResume, duplicateResume, renameResume, sampleResume, switchTempla
 import { analyzeTemplateCompatibility, templates } from '../domain/templates';
 import type { CompileArtifact, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from '../domain/types';
 import { storage } from '../services/storage';
-
-const sections: SectionKey[] = ['summary', 'experience', 'education', 'projects', 'skills', 'awards', 'customSections'];
 
 const sectionLabels: Record<SectionKey, string> = {
   summary: 'Summary',
@@ -525,20 +523,112 @@ const StylePanel = ({
 }) => {
   const settings = getSettings(active);
   const { size: baseSize, lineHeight } = parseTypo(settings.typography);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+  const [pointerY, setPointerY] = useState<number>(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowHeights = useRef<number[]>([]);
+  const rowTops = useRef<number[]>([]);
+  const grabOffset = useRef<number>(0);
+
+  const reorder = (from: SectionKey, to: SectionKey) => {
+    onChange((resume) => {
+      const order = [...resume.sectionOrder];
+      const fi = order.indexOf(from);
+      const ti = order.indexOf(to);
+      if (fi === -1 || ti === -1) return resume;
+      order.splice(fi, 1);
+      order.splice(ti, 0, from);
+      return touchResume({ ...resume, sectionOrder: order });
+    });
+  };
+
+  const handleGripPointerDown = (e: React.PointerEvent, index: number) => {
+    e.preventDefault();
+    if (!listRef.current) return;
+    const rows = listRef.current.querySelectorAll<HTMLElement>('.module-row');
+    rowHeights.current = Array.from(rows).map((r) => r.getBoundingClientRect().height);
+    rowTops.current = Array.from(rows).map((r) => r.getBoundingClientRect().top);
+    grabOffset.current = e.clientY - rowTops.current[index];
+    listRef.current.setPointerCapture(e.pointerId);
+    setDragIndex(index);
+    setOverIndex(index);
+    setPointerY(e.clientY);
+  };
+
+  const handleListPointerMove = (e: React.PointerEvent) => {
+    if (dragIndex === null) return;
+    setPointerY(e.clientY);
+    const n = active.sectionOrder.length;
+    let newOver = n - 1;
+    for (let i = 0; i < n; i++) {
+      if (rowTops.current[i] + rowHeights.current[i] / 2 > e.clientY) {
+        newOver = i;
+        break;
+      }
+    }
+    if (newOver !== overIndex) setOverIndex(newOver);
+  };
+
+  const handleListPointerUp = () => {
+    if (dragIndex !== null && overIndex !== null && dragIndex !== overIndex) {
+      reorder(active.sectionOrder[dragIndex], active.sectionOrder[overIndex]);
+    }
+    setDragIndex(null);
+    setOverIndex(null);
+  };
+
+  const getItemStyle = (index: number): React.CSSProperties => {
+    if (dragIndex === null || overIndex === null) return {};
+    if (index === dragIndex) {
+      const dy = pointerY - grabOffset.current - rowTops.current[index];
+      return {
+        transform: `translateY(${dy}px) scale(1.02)`,
+        transition: 'box-shadow 150ms ease',
+        position: 'relative',
+        zIndex: 100,
+        boxShadow: '0 8px 24px rgba(27,27,24,0.14)',
+      };
+    }
+    const gap = 8;
+    const h = (rowHeights.current[dragIndex] ?? 42) + gap;
+    if (dragIndex < overIndex && index > dragIndex && index <= overIndex) {
+      return { transform: `translateY(-${h}px)` };
+    }
+    if (dragIndex > overIndex && index >= overIndex && index < dragIndex) {
+      return { transform: `translateY(${h}px)` };
+    }
+    return {};
+  };
 
   return (
     <aside className="panel style-panel" aria-label="Layout and template controls">
       <div className="design-card module-card">
         <div className="panel-title">Layout</div>
-        <div className="module-list">
-          {sections.map((section) => {
+        <div
+          className={`module-list${dragIndex !== null ? ' is-dragging' : ''}`}
+          ref={listRef}
+          onPointerMove={handleListPointerMove}
+          onPointerUp={handleListPointerUp}
+          onPointerCancel={handleListPointerUp}
+        >
+          {active.sectionOrder.map((section, index) => {
             const isHidden = active.hiddenSections.includes(section);
             return (
               <div
                 key={section}
-                className={`module-row${section === selectedSection ? ' selected' : ''}${isHidden ? ' hidden' : ''}`}
+                style={getItemStyle(index)}
+                className={[
+                  'module-row',
+                  section === selectedSection ? 'selected' : '',
+                  isHidden ? 'hidden' : '',
+                  dragIndex === index ? 'dragging' : '',
+                ].filter(Boolean).join(' ')}
               >
-                <GripVertical aria-hidden="true" />
+                <GripVertical
+                  aria-hidden="true"
+                  onPointerDown={(e) => handleGripPointerDown(e, index)}
+                />
                 <button className="module-select-btn" onClick={() => onSelectSection(section)}>
                   {sectionLabels[section]}
                 </button>
