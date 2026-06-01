@@ -80,14 +80,25 @@ export const compileLatexProject = async (request: LatexCompileRequest): Promise
 };
 
 const createCompiler = (engine: LatexCompilerEngine) => {
+  const busytexBasePath = import.meta.env.VITE_BUSYTEX_BASE_PATH ?? '/core/busytex';
   const runner = new BusyTexRunner({
-    busytexBasePath: import.meta.env.VITE_BUSYTEX_BASE_PATH ?? '/core/busytex',
+    busytexBasePath,
+    ...getBusyTexDataPackageConfig(busytexBasePath),
     verbose: true
   });
 
   if (engine === 'pdflatex') return new PdfLatex(runner, true);
   if (engine === 'lualatex') return new LuaLatex(runner, true);
   return new XeLatex(runner, true);
+};
+
+const getBusyTexDataPackageConfig = (busytexBasePath: string) => {
+  const basePath = busytexBasePath.replace(/\/$/, '');
+
+  return {
+    preloadDataPackages: [`${basePath}/texlive-basic.js`],
+    catalogDataPackages: [`${basePath}/texlive-basic.js`, `${basePath}/texlive-recommended.js`, `${basePath}/texlive-extra.js`]
+  };
 };
 
 const toBusyTexFile = (file: LatexProjectFile): FileInput => {
@@ -99,7 +110,9 @@ const flattenBusyTexLogs = (result: CompileResult) => {
   const logs = [
     `BusyTeX exit code: ${result.exitCode}`,
     result.log,
-    ...(result.logs ?? []).flatMap((entry) => [entry.cmd, entry.stdout, entry.stderr, entry.log].filter(Boolean))
+    ...(result.logs ?? []).flatMap((entry) =>
+      [entry.cmd, entry.stdout, entry.stderr, entry.log, entry.texmflog, entry.missfontlog, entry.aux].filter(Boolean)
+    )
   ].filter(Boolean);
 
   return logs.length ? logs : ['BusyTeX finished without logs.'];

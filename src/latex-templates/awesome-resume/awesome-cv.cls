@@ -176,44 +176,44 @@
 % Set font for header (default is Roboto)
 \newfontfamily\headerfont[
   Path=\@fontdir,
-  UprightFont=*-Regular,
-  ItalicFont=*-Italic,
-  BoldFont=*-Bold,
-  BoldItalicFont=*-BoldItalic,
-]{Roboto}
+  UprightFont=Roboto-Regular.ttf,
+  ItalicFont=Roboto-Italic.ttf,
+  BoldFont=Roboto-Bold.ttf,
+  BoldItalicFont=Roboto-BoldItalic.ttf,
+]{Roboto-Regular.ttf}
 
 \newfontfamily\headerfontlight[
   Path=\@fontdir,
-  UprightFont=*-Thin,
-  ItalicFont=*-ThinItalic,
-  BoldFont=*-Medium,
-  BoldItalicFont=*-MediumItalic,
-]{Roboto}
+  UprightFont=Roboto-Thin.ttf,
+  ItalicFont=Roboto-ThinItalic.ttf,
+  BoldFont=Roboto-Medium.ttf,
+  BoldItalicFont=Roboto-MediumItalic.ttf,
+]{Roboto-Thin.ttf}
 
 % Set font for footer (default is Source Sans Pro)
 \newfontfamily\footerfont[
   Path=\@fontdir,
-  UprightFont=*-Regular,
-  ItalicFont=*-It,
-  BoldFont=*-Bold
-]{SourceSansPro}
+  UprightFont=SourceSansPro-Regular.otf,
+  ItalicFont=SourceSansPro-It.otf,
+  BoldFont=SourceSansPro-Bold.otf
+]{SourceSansPro-Regular.otf}
 
 % Set font for body (default is Source Sans Pro)
 \newfontfamily\bodyfont[
   Path=\@fontdir,
-  UprightFont=*-Regular,
-  ItalicFont=*-It,
-  BoldFont=*-Bold,
-  BoldItalicFont=*-BoldIt
-]{SourceSansPro}
+  UprightFont=SourceSansPro-Regular.otf,
+  ItalicFont=SourceSansPro-It.otf,
+  BoldFont=SourceSansPro-Bold.otf,
+  BoldItalicFont=SourceSansPro-BoldIt.otf
+]{SourceSansPro-Regular.otf}
 
 \newfontfamily\bodyfontlight[
   Path=\@fontdir,
-  UprightFont=*-Light,
-  ItalicFont=*-LightIt,
-  BoldFont=*-Semibold,
-  BoldItalicFont=*-SemiboldIt
-]{SourceSansPro}
+  UprightFont=SourceSansPro-Light.otf,
+  ItalicFont=SourceSansPro-LightIt.otf,
+  BoldFont=SourceSansPro-Semibold.otf,
+  BoldItalicFont=SourceSansPro-SemiboldIt.otf
+]{SourceSansPro-Light.otf}
 
 
 %-------------------------------------------------------------------------------

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { BusyTexRunner } from 'texlyre-busytex';
 import { compileLatexProject, busyTexLicenseReview } from './latexCompiler';
 import type { LatexProjectFile } from '../domain/latexProject';
 
@@ -49,6 +50,13 @@ describe('LaTeX compiler service', () => {
 
     expect(result.status).toBe('success');
     expect(result.pdfBlob).toBeInstanceOf(Blob);
+    expect(BusyTexRunner).toHaveBeenCalledWith(
+      expect.objectContaining({
+        busytexBasePath: '/core/busytex',
+        preloadDataPackages: ['/core/busytex/texlive-basic.js'],
+        catalogDataPackages: ['/core/busytex/texlive-basic.js', '/core/busytex/texlive-recommended.js', '/core/busytex/texlive-extra.js']
+      })
+    );
     expect(compileMock).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.stringContaining('\\documentclass'),
@@ -78,6 +86,37 @@ describe('LaTeX compiler service', () => {
     expect(result.status).toBe('failed');
     expect(result.diagnostics).toContain('BusyTeX exited with code 1.');
     expect(result.logs.join('\n')).toContain('missing package');
+  });
+
+  it('includes TeX engine logs when BusyTeX reports a package or font failure', async () => {
+    compileMock.mockResolvedValue({
+      success: false,
+      log: '',
+      exitCode: 1,
+      logs: [
+        {
+          cmd: 'xelatex',
+          stdout: '',
+          stderr: '',
+          log: '',
+          texmflog: 'LaTeX Error: File `unicode-math.sty` not found.',
+          missfontlog: 'mktextfm FontAwesome',
+          aux: 'resume.aux unavailable',
+          exit_code: 1
+        }
+      ]
+    });
+
+    const result = await compileLatexProject({
+      engine: 'xelatex',
+      mainFile: 'resume.tex',
+      files: [textFile('resume.tex', '\\documentclass{article}')]
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.logs.join('\n')).toContain('unicode-math.sty');
+    expect(result.logs.join('\n')).toContain('mktextfm FontAwesome');
+    expect(result.logs.join('\n')).toContain('resume.aux unavailable');
   });
 });
 
