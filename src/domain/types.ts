@@ -1,6 +1,27 @@
 export type TemplateId = 'classic-ats' | 'modern-compact' | 'awesome-cv';
 export type TemplateKey = string;
 
+export type ProfileFieldKey =
+  | 'fullName'
+  | 'headline'
+  | 'email'
+  | 'phone'
+  | 'location'
+  | 'links'
+  | 'gitlab'
+  | 'stackoverflow'
+  | 'twitter'
+  | 'x'
+  | 'skype'
+  | 'reddit'
+  | 'medium'
+  | 'kaggle'
+  | 'hackerrank'
+  | 'telegram'
+  | 'googleScholar'
+  | 'extraInfo'
+  | 'quote';
+
 export interface Profile {
   fullName: string;
   headline: string;
@@ -8,6 +29,32 @@ export interface Profile {
   phone: string;
   location: string;
   links: string[];
+  gitlab?: string;
+  stackoverflow?: {
+    id: string;
+    name: string;
+  };
+  twitter?: string;
+  x?: string;
+  skype?: string;
+  reddit?: string;
+  medium?: string;
+  kaggle?: string;
+  hackerrank?: string;
+  telegram?: string;
+  googleScholar?: {
+    id: string;
+    name: string;
+  };
+  extraInfo?: string;
+  quote?: string;
+  hiddenFields?: ProfileFieldKey[];
+}
+
+export interface ProfileHighlightItem {
+  id: string;
+  text: string;
+  hidden?: boolean;
 }
 
 export interface ExperienceItem {
@@ -18,6 +65,7 @@ export interface ExperienceItem {
   startDate: string;
   endDate: string;
   highlights: string[];
+  hidden?: boolean;
 }
 
 export interface EducationItem {
@@ -28,6 +76,7 @@ export interface EducationItem {
   startDate: string;
   endDate: string;
   highlights: string[];
+  hidden?: boolean;
 }
 
 export interface ProjectItem {
@@ -36,12 +85,14 @@ export interface ProjectItem {
   description: string;
   highlights: string[];
   links: string[];
+  hidden?: boolean;
 }
 
 export interface CustomSection {
   id: string;
   title: string;
   body: string;
+  hidden?: boolean;
 }
 
 export interface ReviewMarker {
@@ -54,6 +105,7 @@ export interface ReviewMarker {
 export interface ResumeContent {
   profile: Profile;
   summary: string;
+  profileHighlights?: ProfileHighlightItem[];
   experience: ExperienceItem[];
   education: EducationItem[];
   projects: ProjectItem[];
@@ -80,7 +132,8 @@ export type LayoutModule =
       id: string;
       kind: 'space';
       enabled: boolean;
-      size: 'small' | 'medium' | 'large';
+      value: number;
+      size?: 'small' | 'medium' | 'large';
     }
   | {
       id: string;

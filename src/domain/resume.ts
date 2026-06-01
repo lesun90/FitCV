@@ -1,4 +1,4 @@
-import { defaultLayoutForTemplate } from './templateAdapters';
+import { defaultLayoutForTemplate, normalizeLayoutModule } from './templateAdapters';
 import type { LayoutModule, ResumeContent, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from './types';
 import { createId } from './ids';
 
@@ -25,9 +25,30 @@ export const emptyContent = (): ResumeContent => ({
     email: '',
     phone: '',
     location: '',
-    links: []
+    links: [],
+    gitlab: '',
+    stackoverflow: {
+      id: '',
+      name: ''
+    },
+    twitter: '',
+    x: '',
+    skype: '',
+    reddit: '',
+    medium: '',
+    kaggle: '',
+    hackerrank: '',
+    telegram: '',
+    googleScholar: {
+      id: '',
+      name: ''
+    },
+    extraInfo: '',
+    quote: '',
+    hiddenFields: []
   },
   summary: '',
+  profileHighlights: [],
   experience: [],
   education: [],
   projects: [],
@@ -44,9 +65,32 @@ export const sampleResume = (): ResumeRecord => {
     email: 'ada@example.com',
     phone: '+1 555 0142',
     location: 'London, UK',
-    links: ['linkedin.com/in/ada', 'github.com/ada']
+    links: ['linkedin.com/in/ada', 'github.com/ada'],
+    gitlab: '',
+    stackoverflow: {
+      id: '',
+      name: ''
+    },
+    twitter: '',
+    x: '',
+    skype: '',
+    reddit: '',
+    medium: '',
+    kaggle: '',
+    hackerrank: '',
+    telegram: '',
+    googleScholar: {
+      id: '',
+      name: ''
+    },
+    extraInfo: '',
+    quote: '',
+    hiddenFields: []
   };
   resume.content.summary = 'Structured technical leader who turns ambiguous systems into readable, durable programs.';
+  resume.content.profileHighlights = [
+    { id: id('highlight'), text: 'Structured technical leader who turns ambiguous systems into readable, durable programs.' }
+  ];
   resume.content.experience.push({
     id: id('exp'),
     company: 'Analytical Engine Lab',
@@ -130,7 +174,29 @@ export const switchTemplate = (resume: ResumeRecord, templateId: TemplateId): Re
 
 export const ensureTemplateLayouts = (resume: ResumeRecord): ResumeRecord => {
   const next = structuredClone(resume) as ResumeRecord & { templateLayouts?: Record<string, LayoutModule[]> };
+  const defaults = emptyContent();
+  next.content.profile = {
+    ...defaults.profile,
+    ...next.content.profile,
+    stackoverflow: {
+      id: next.content.profile.stackoverflow?.id ?? '',
+      name: next.content.profile.stackoverflow?.name ?? ''
+    },
+    googleScholar: {
+      id: next.content.profile.googleScholar?.id ?? '',
+      name: next.content.profile.googleScholar?.name ?? ''
+    },
+    hiddenFields: next.content.profile.hiddenFields ?? []
+  };
+  next.content.profileHighlights ??= next.content.summary
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((text) => ({ id: id('highlight'), text }));
   next.templateLayouts ??= {};
+  next.templateLayouts = Object.fromEntries(
+    Object.entries(next.templateLayouts).map(([templateId, layout]) => [templateId, layout.map(normalizeLayoutModule)])
+  );
   next.templateSettings ??= {};
   next.templateSettings[next.activeTemplateId] ??= defaultTemplateSettings(next.activeTemplateId);
   next.templateLayouts[next.activeTemplateId] ??= defaultLayoutForTemplate(next.activeTemplateId, next);

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
-  AlignCenter,
-  AlignLeft,
-  AlignRight,
+  ArrowDown,
+  ArrowUp,
   CheckCircle2,
   ChevronLeft,
   ChevronUp,
@@ -16,19 +15,14 @@ import {
   FileCheck2,
   FilePlus2,
   FolderOpen,
-  Github,
   GripVertical,
-  Home,
-  Layers,
   Loader2,
   MoreHorizontal,
-  PanelLeftClose,
   Pencil,
   Plus,
   RotateCw,
   Settings,
   ShieldCheck,
-  Sparkles,
   Terminal,
   Trash2,
   Upload,
@@ -36,15 +30,15 @@ import {
 } from 'lucide-react';
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
 import { runAtsChecks } from '../domain/checks';
-import { clearReviewMarkersForField, createResume, duplicateResume, renameResume, sampleResume, switchTemplate, touchResume } from '../domain/resume';
+import { clearReviewMarkersForField, createResume, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, switchTemplate, touchResume } from '../domain/resume';
 import { analyzeTemplateCompatibility, templates } from '../domain/templates';
-import type { CompileArtifact, LayoutModule, ResumeRecord, SectionKey, TemplateId } from '../domain/types';
+import type { CompileArtifact, LayoutModule, ProfileFieldKey, ProfileHighlightItem, ResumeRecord, SectionKey, TemplateId } from '../domain/types';
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
 import { formatPdfPreviewUrl } from './latexUtils';
 import { downloadBlob, StatusPill } from './shared';
-import { hasTemplateAdapter } from '../domain/templateAdapters';
+import { getTemplateAdapter, hasTemplateAdapter } from '../domain/templateAdapters';
 
 const sectionLabels: Record<SectionKey, string> = {
   summary: 'Summary',
@@ -61,6 +55,8 @@ const visibleLayoutTemplates = templates.filter((template) => template.id === 'a
 const labelForLayoutModule = (module: LayoutModule) => {
   if (module.kind === 'space') return 'Space';
   if (module.kind === 'new-page') return 'New page';
+  const title = typeof module.options?.title === 'string' ? module.options.title.trim() : '';
+  if (title) return title;
   return sectionLabels[module.section];
 };
 
@@ -96,6 +92,8 @@ export const App = () => {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const compileGenRef = useRef(0);
+  const activeRef = useRef(active);
+  activeRef.current = active;
 
   useEffect(() => {
     void hydrate();
@@ -110,12 +108,13 @@ export const App = () => {
       setActiveId(seed.id);
       return;
     }
-    const sorted = stored.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    const sorted = stored.map(ensureTemplateLayouts).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     setResumes(sorted);
     setActiveId((await storage.getPreference())?.activeResumeId ?? sorted[0].id);
   };
 
   const save = async (resume: ResumeRecord) => {
+    activeRef.current = resume;
     await storage.saveResume(resume);
     setResumes((current) => [resume, ...current.filter((item) => item.id !== resume.id)]);
     setActiveId(resume.id);
@@ -132,7 +131,9 @@ export const App = () => {
   const checks = useMemo(() => (active ? runAtsChecks(active) : []), [active]);
   const compatibility = useMemo(() => (active ? analyzeTemplateCompatibility(active, active.activeTemplateId) : undefined), [active]);
   const activeTemplate = active ? templates.find((template) => template.id === active.activeTemplateId) : undefined;
-  const pdfUrl = useMemo(() => (artifact?.pdfBlob ? URL.createObjectURL(artifact.pdfBlob) : ''), [artifact]);
+  const pdfUrl = useMemo(() => (
+    artifact?.pdfBlob && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(artifact.pdfBlob) : ''
+  ), [artifact?.pdfBlob]);
   const reviewCount = active?.reviewMarkers.filter((marker) => marker.needsReview).length ?? 0;
   const warningCount = checks.filter((check) => check.status !== 'pass').length;
   const cleanCompile = artifact?.status === 'clean' && artifact.resumeVersion === active?.version;
@@ -140,7 +141,7 @@ export const App = () => {
   // Takes an optional resume override so we can compile the correct resume
   // immediately when switching sessions (before React state settles).
   const compile = async (resumeOverride?: ResumeRecord) => {
-    const target = resumeOverride ?? active;
+    const target = resumeOverride ?? activeRef.current;
     if (!target) return;
     const gen = ++compileGenRef.current;
     try {
@@ -159,13 +160,16 @@ export const App = () => {
     }
   };
 
-  // Auto-compile: fires on content/layout changes only (not on a timer).
-  // If a compile is in-flight, incrementing compileGenRef discards its result
-  // and the new compile wins.
+  // Auto-compile for structural changes (layout, add/delete): fires immediately
+  // when the version changes and no text field is focused. Text-field edits
+  // are handled separately via onBlur on the editor board so compile only
+  // triggers after the user finishes typing, not on every keystroke.
   useEffect(() => {
     if (!autoCompile || !active || mode !== 'editor') return;
+    const el = document.activeElement;
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
     clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void compile(), 1500);
+    debounceRef.current = setTimeout(() => void compile(), 500);
     return () => clearTimeout(debounceRef.current);
   }, [active?.version, autoCompile]);
 
@@ -341,10 +345,12 @@ const Dashboard = ({
 
           <section className="filter-card" aria-label="Library filters">
             <h2>Library</h2>
-            <FilterItem active label="All resumes" value={resumes.length.toString()} />
-            <FilterItem label="Base resumes" value={resumes.length.toString()} />
-            <FilterItem label="Needs review" value={reviewCount.toString()} />
-            <FilterItem label="ATS warnings" value={warningCount.toString()} />
+            <ul className="filter-list" aria-label="Library summaries">
+              <FilterItem active label="All resumes" value={resumes.length.toString()} />
+              <FilterItem label="Base resumes" value={resumes.length.toString()} />
+              <FilterItem label="Needs review" value={reviewCount.toString()} />
+              <FilterItem label="ATS warnings" value={warningCount.toString()} />
+            </ul>
           </section>
 
           <section className="filter-card" aria-label="Library actions">
@@ -465,7 +471,17 @@ const EditorWorkspace = ({
 
       {error && <div className="notice editor-notice">{error}</div>}
 
-      <section className="editor-board" aria-label="Editor workbench">
+      <section
+        className="editor-board"
+        aria-label="Editor workbench"
+        onBlur={(e) => {
+          if (!autoCompile) return;
+          const { target } = e;
+          if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+            void onCompile();
+          }
+        }}
+      >
         <StylePanel
           active={active}
           onChange={onChange}
@@ -515,10 +531,10 @@ const TopChrome = ({ label, children }: { label: string; children: ReactNode }) 
 );
 
 const FilterItem = ({ active = false, label, value }: { active?: boolean; label: string; value: string }) => (
-  <button className={active ? 'filter-item active' : 'filter-item'}>
+  <li className={active ? 'filter-item active' : 'filter-item'}>
     <span>{label}</span>
     <strong>{value}</strong>
-  </button>
+  </li>
 );
 
 const ResumeGroup = ({ resume, active, onOpen, onDuplicate }: { resume: ResumeRecord; active: boolean; onOpen: () => void; onDuplicate: () => void }) => {
@@ -602,9 +618,12 @@ const StylePanel = ({
 }) => {
   const usesLayoutModules = hasTemplateAdapter(active.activeTemplateId);
   const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
+  const activeAdapter = getTemplateAdapter(active.activeTemplateId);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [pointerY, setPointerY] = useState<number>(0);
+  const [showAddModule, setShowAddModule] = useState(false);
+  const [editingModuleId, setEditingModuleId] = useState<string>();
   const listRef = useRef<HTMLDivElement>(null);
   const rowHeights = useRef<number[]>([]);
   const rowTops = useRef<number[]>([]);
@@ -622,6 +641,63 @@ const StylePanel = ({
     });
   };
 
+  const removeModule = (moduleId: string) => {
+    onChange((resume) => {
+      const layout = (resume.templateLayouts[resume.activeTemplateId] ?? []).filter((m) => m.id !== moduleId);
+      return touchResume({ ...resume, templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: layout } });
+    });
+  };
+
+  const renameSectionModule = (moduleId: string, title: string) => {
+    onChange((resume) => updateLayoutModule(resume, moduleId, (module) => {
+      if (module.kind !== 'section') return module;
+      return {
+        ...module,
+        options: {
+          ...(module.options ?? {}),
+          title
+        }
+      };
+    }));
+  };
+
+  const addLayoutControlModule = (kind: 'space' | 'new-page') => {
+    const newModule: LayoutModule = kind === 'space'
+      ? { id: createId('module-space'), kind: 'space', enabled: true, value: 12 }
+      : { id: createId('module-new-page'), kind: 'new-page', enabled: true };
+    onChange((resume) => {
+      const layout = [...(resume.templateLayouts[resume.activeTemplateId] ?? [])];
+      return touchResume({ ...resume, templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: [...layout, newModule] } });
+    });
+    onSelectModule(newModule);
+    setShowAddModule(false);
+  };
+
+  const addSectionModule = (sectionType: NonNullable<typeof activeAdapter>['sectionTypes'][number]) => {
+    const customSectionId = sectionType.section === 'customSections' ? createId('custom') : undefined;
+    const newModule: LayoutModule = {
+      id: createId(`module-${sectionType.section}`),
+      kind: 'section',
+      section: sectionType.section,
+      sectionType: sectionType.id,
+      enabled: true,
+      ...(customSectionId ? { options: { customSectionId } } : {})
+    };
+    onChange((resume) => {
+      const layout = [...(resume.templateLayouts[resume.activeTemplateId] ?? [])];
+      const content = customSectionId
+        ? { ...resume.content, customSections: [...resume.content.customSections, { id: customSectionId, title: '', body: '' }] }
+        : resume.content;
+      return touchResume({
+        ...resume,
+        content,
+        templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: [...layout, newModule] }
+      });
+    });
+    onSelectModule(newModule);
+    setShowAddModule(false);
+  };
+
   const reorderModule = (fromId: string, toId: string) => {
     onChange((resume) => {
       const layout = [...(resume.templateLayouts[resume.activeTemplateId] ?? [])];
@@ -632,6 +708,18 @@ const StylePanel = ({
       layout.splice(ti, 0, moved);
       return touchResume({ ...resume, templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: layout } });
     });
+  };
+
+  const moveModule = (index: number, direction: -1 | 1) => {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= activeLayout.length) return;
+    reorderModule(activeLayout[index].id, activeLayout[nextIndex].id);
+  };
+
+  const moveSection = (index: number, direction: -1 | 1) => {
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= active.sectionOrder.length) return;
+    reorder(active.sectionOrder[index], active.sectionOrder[nextIndex]);
   };
 
   const handleGripPointerDown = (e: React.PointerEvent, index: number) => {
@@ -725,9 +813,54 @@ const StylePanel = ({
                   aria-hidden="true"
                   onPointerDown={(e) => handleGripPointerDown(e, index)}
                 />
-                <button className="module-select-btn" onClick={() => onSelectModule(module)}>
-                  {label}
-                </button>
+                {module.kind === 'section' && editingModuleId === module.id ? (
+                  <input
+                    aria-label={`Section name for ${label}`}
+                    className="module-name-input"
+                    value={label}
+                    onChange={(e) => renameSectionModule(module.id, e.target.value)}
+                    onBlur={() => setEditingModuleId(undefined)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === 'Escape') {
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    autoFocus
+                  />
+                ) : (
+                  <button className="module-select-btn" onClick={() => onSelectModule(module)}>
+                    {label}
+                  </button>
+                )}
+                <div className="reorder-controls" aria-label={`Reorder ${label}`}>
+                  <button
+                    className="reorder-button"
+                    disabled={index === 0}
+                    onClick={() => moveModule(index, -1)}
+                    aria-label={`Move ${label} up`}
+                    title={`Move ${label} up`}
+                  >
+                    <ArrowUp />
+                  </button>
+                  <button
+                    className="reorder-button"
+                    disabled={index === activeLayout.length - 1}
+                    onClick={() => moveModule(index, 1)}
+                    aria-label={`Move ${label} down`}
+                    title={`Move ${label} down`}
+                  >
+                    <ArrowDown />
+                  </button>
+                </div>
+                {module.kind === 'section' && (
+                  <button
+                    className="visibility-toggle"
+                    onClick={() => setEditingModuleId(module.id)}
+                    aria-label={`Edit ${label}`}
+                  >
+                    <Pencil />
+                  </button>
+                )}
                 <button
                   className="visibility-toggle"
                   onClick={() =>
@@ -736,6 +869,13 @@ const StylePanel = ({
                   aria-label={`${module.enabled ? 'Disable' : 'Enable'} ${label}`}
                 >
                   {module.enabled ? <Eye /> : <EyeOff />}
+                </button>
+                <button
+                  className="visibility-toggle"
+                  onClick={() => removeModule(module.id)}
+                  aria-label={`Remove ${label}`}
+                >
+                  <Trash2 />
                 </button>
               </div>
             );
@@ -759,6 +899,26 @@ const StylePanel = ({
                 <button className="module-select-btn" onClick={() => onSelectSection(section)}>
                   {sectionLabels[section]}
                 </button>
+                <div className="reorder-controls" aria-label={`Reorder ${sectionLabels[section]}`}>
+                  <button
+                    className="reorder-button"
+                    disabled={index === 0}
+                    onClick={() => moveSection(index, -1)}
+                    aria-label={`Move ${sectionLabels[section]} up`}
+                    title={`Move ${sectionLabels[section]} up`}
+                  >
+                    <ArrowUp />
+                  </button>
+                  <button
+                    className="reorder-button"
+                    disabled={index === active.sectionOrder.length - 1}
+                    onClick={() => moveSection(index, 1)}
+                    aria-label={`Move ${sectionLabels[section]} down`}
+                    title={`Move ${sectionLabels[section]} down`}
+                  >
+                    <ArrowDown />
+                  </button>
+                </div>
                 <button
                   className="visibility-toggle"
                   onClick={() =>
@@ -775,7 +935,30 @@ const StylePanel = ({
               </div>
             );
           })}
-          <button className="add-module"><Plus />Add Module</button>
+          {showAddModule ? (
+            <div className="add-module-picker">
+              <div className="add-module-group">
+                <span>Sections</span>
+                {activeAdapter?.sectionTypes.map((sectionType) => (
+                  <button
+                    className="add-module-option"
+                    key={sectionType.id}
+                    onClick={() => addSectionModule(sectionType)}
+                  >
+                    <Plus />{sectionType.label}
+                  </button>
+                ))}
+              </div>
+              <div className="add-module-group">
+                <span>Layout controls</span>
+                <button className="add-module-option" onClick={() => addLayoutControlModule('space')}><Plus />Space</button>
+                <button className="add-module-option" onClick={() => addLayoutControlModule('new-page')}><Plus />New page</button>
+              </div>
+              <button className="add-module-cancel" onClick={() => setShowAddModule(false)}>Cancel</button>
+            </div>
+          ) : (
+            <button className="add-module" onClick={() => setShowAddModule(true)}><Plus />Add Module</button>
+          )}
         </div>
       </div>
 
@@ -825,22 +1008,44 @@ const renderLayoutControlEditor = (
   onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void
 ) => {
   if (module.kind === 'space') {
+    const value = Number.isFinite(module.value) ? module.value : 12;
+    const updateSpaceValue = (rawValue: number) => {
+      const nextValue = Math.min(96, Math.max(0, Math.round(rawValue * 10) / 10));
+      onChange((resume) => updateLayoutModule(resume, module.id, (item) => item.kind === 'space' ? { ...item, value: nextValue } : item));
+    };
     return (
       <div className="section-card">
         <div className="subhead">
           <h3>Space</h3>
           <span className="template-chip">{module.enabled ? 'Enabled' : 'Disabled'}</span>
         </div>
-        <div className="segmented">
-          {(['small', 'medium', 'large'] as const).map((size) => (
-            <button
-              key={size}
-              className={module.size === size ? 'selected' : ''}
-              onClick={() => onChange((resume) => updateLayoutModule(resume, module.id, (item) => item.kind === 'space' ? { ...item, size } : item))}
-            >
-              {size[0].toUpperCase() + size.slice(1)}
-            </button>
-          ))}
+        <div className="space-value-control">
+          <label className="space-slider-label">
+            <span>Space value: {value}pt</span>
+            <input
+              type="range"
+              min={0}
+              max={96}
+              step={1}
+              value={value}
+              onChange={(e) => updateSpaceValue(Number(e.target.value))}
+            />
+          </label>
+          <label className="space-number-field">
+            <span>Value</span>
+            <div>
+              <input
+                aria-label="Space value in points"
+                type="number"
+                min={0}
+                max={96}
+                step={1}
+                value={value}
+                onChange={(e) => updateSpaceValue(Number(e.target.value))}
+              />
+              <span>pt</span>
+            </div>
+          </label>
         </div>
       </div>
     );
@@ -857,13 +1062,13 @@ const renderLayoutControlEditor = (
           className={module.enabled ? 'selected' : ''}
           onClick={() => onChange((resume) => updateLayoutModule(resume, module.id, (item) => ({ ...item, enabled: true })))}
         >
-          On
+          Enable
         </button>
         <button
           className={!module.enabled ? 'selected' : ''}
           onClick={() => onChange((resume) => updateLayoutModule(resume, module.id, (item) => ({ ...item, enabled: false })))}
         >
-          Off
+          Disable
         </button>
       </div>
     </div>
@@ -891,27 +1096,132 @@ type SectionEditorProps = {
   onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
 };
 
-const SummaryEditor = ({ active, onChange }: SectionEditorProps) => (
-  <div className="section-card">
-    <div className="align-card" aria-label="Resume alignment">
-      <span>Align</span>
-      <div className="segmented">
-        <button className="selected" aria-label="Align left"><AlignLeft /></button>
-        <button aria-label="Align center"><AlignCenter /></button>
-        <button aria-label="Align right"><AlignRight /></button>
+const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
+  const profile = active.content.profile;
+  const highlights = profileHighlightsForResume(active);
+  const hiddenFields = profile.hiddenFields ?? [];
+  const textField = (
+    field: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>,
+    label: string,
+    value: string,
+    options: { type?: string; parseValue?: (value: string) => string | string[] } = {}
+  ) => (
+    <ProfileTextField
+      field={field}
+      hidden={hiddenFields.includes(field)}
+      label={label}
+      onChange={onChange}
+      value={value}
+      {...options}
+    />
+  );
+  const nestedField = (
+    group: 'stackoverflow' | 'googleScholar',
+    keyName: 'id' | 'name',
+    label: string,
+    value: string
+  ) => (
+    <ProfileNestedTextField
+      group={group}
+      hidden={hiddenFields.includes(group)}
+      keyName={keyName}
+      label={label}
+      onChange={onChange}
+      value={value}
+    />
+  );
+
+  return (
+    <div className="section-card">
+      <div className="field-grid profile-field-grid">
+        {textField('fullName', 'Name', profile.fullName ?? '')}
+        {textField('headline', 'Title', profile.headline ?? '')}
+        {textField('email', 'Email', profile.email ?? '', { type: 'email' })}
+        {textField('phone', 'Phone', profile.phone ?? '', { type: 'tel' })}
+        {textField('location', 'Location', profile.location ?? '')}
+        {textField('links', 'Links', (profile.links ?? []).join(', '), { parseValue: splitList })}
+        {textField('gitlab', 'GitLab', profile.gitlab ?? '')}
+        {nestedField('stackoverflow', 'id', 'Stack Overflow ID', profile.stackoverflow?.id ?? '')}
+        {nestedField('stackoverflow', 'name', 'Stack Overflow name', profile.stackoverflow?.name ?? '')}
+        {textField('twitter', 'Twitter', profile.twitter ?? '')}
+        {textField('x', 'X', profile.x ?? '')}
+        {textField('skype', 'Skype', profile.skype ?? '')}
+        {textField('reddit', 'Reddit', profile.reddit ?? '')}
+        {textField('medium', 'Medium', profile.medium ?? '')}
+        {textField('kaggle', 'Kaggle', profile.kaggle ?? '')}
+        {textField('hackerrank', 'HackerRank', profile.hackerrank ?? '')}
+        {textField('telegram', 'Telegram', profile.telegram ?? '')}
+        {nestedField('googleScholar', 'id', 'Google Scholar ID', profile.googleScholar?.id ?? '')}
+        {nestedField('googleScholar', 'name', 'Google Scholar name', profile.googleScholar?.name ?? '')}
+        {textField('extraInfo', 'Extra info', profile.extraInfo ?? '')}
+        {textField('quote', 'Quote', profile.quote ?? '')}
+      </div>
+
+      <div className="items profile-highlight-list">
+        <div className="subhead">
+          <div>
+            <h3>Profile highlights</h3>
+            <span className="subhead-meta">
+              {highlights.filter((item) => !item.hidden && item.text.trim()).length} visible on resume
+            </span>
+          </div>
+          <button
+            aria-label="Add profile highlight"
+            onClick={() => onChange((r) => updateProfileHighlights(r, [...profileHighlightsForResume(r), { id: createId('highlight'), text: '' }]))}
+          >
+            <Plus />Add highlight
+          </button>
+        </div>
+        {!highlights.length && (
+          <div className="profile-highlight-empty">
+            <strong>No highlights yet</strong>
+            <span>Add short, outcome-focused bullets for the top profile block.</span>
+          </div>
+        )}
+        {highlights.map((item, index) => (
+          <article className={`profile-highlight-row${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
+            <div className="profile-highlight-index" aria-hidden="true">{index + 1}</div>
+            <div className="profile-highlight-body">
+              <div className="profile-highlight-head">
+                <div>
+                  <strong>Highlight {index + 1}</strong>
+                  <span>{item.hidden ? 'Hidden from resume' : 'Visible on resume'}</span>
+                </div>
+                <div className="profile-highlight-actions">
+                  <button
+                    className="ghost-button item-hide"
+                    aria-label={item.hidden ? `Show profile highlight ${index + 1}` : `Hide profile highlight ${index + 1}`}
+                    title={item.hidden ? 'Show highlight' : 'Hide highlight'}
+                    onClick={() => onChange((r) => updateProfileHighlight(r, index, { hidden: !item.hidden }))}
+                  >
+                    {item.hidden ? <EyeOff /> : <Eye />}
+                  </button>
+                  <button
+                    className="ghost-button danger item-delete"
+                    aria-label={`Remove profile highlight ${index + 1}`}
+                    title="Remove highlight"
+                    onClick={() => onChange((r) => updateProfileHighlights(r, profileHighlightsForResume(r).filter((_, i) => i !== index)))}
+                  >
+                    <Trash2 />
+                  </button>
+                </div>
+              </div>
+              <label className="stacked-field profile-highlight-field">
+                Profile highlight item
+                <textarea
+                  value={item.text}
+                  rows={3}
+                  placeholder="Led a 4-person migration that reduced report generation time by 38%."
+                  onChange={(e) => onChange((r) => updateProfileHighlight(r, index, { text: e.target.value }))}
+                />
+              </label>
+            </div>
+          </article>
+        ))}
       </div>
     </div>
-    <div className="field-grid two-col">
-      <Field label="Name"><input value={active.content.profile.fullName} onChange={(e) => onChange((r) => patch(r, 'fullName', e.target.value))} /></Field>
-      <Field label="Title"><input value={active.content.profile.headline} onChange={(e) => onChange((r) => patch(r, 'headline', e.target.value))} /></Field>
-      <Field label="Email"><input type="email" value={active.content.profile.email} onChange={(e) => onChange((r) => patch(r, 'email', e.target.value))} /></Field>
-      <Field label="Phone"><input type="tel" value={active.content.profile.phone} onChange={(e) => onChange((r) => patch(r, 'phone', e.target.value))} /></Field>
-      <Field label="Location"><input value={active.content.profile.location} onChange={(e) => onChange((r) => patch(r, 'location', e.target.value))} /></Field>
-      <Field label="Links"><input value={active.content.profile.links.join(', ')} onChange={(e) => onChange((r) => editField(r, 'content.profile.links', (resume) => ({ ...resume, content: { ...resume.content, profile: { ...resume.content.profile, links: splitList(e.target.value) } } })))} /></Field>
-    </div>
-    <label className="stacked-field">Profile summary<textarea value={active.content.summary} onChange={(e) => onChange((r) => editField(r, 'content.summary', (resume) => ({ ...resume, content: { ...resume.content, summary: e.target.value } })))} /></label>
-  </div>
-);
+  );
+};
 
 const ExperienceEditor = ({ active, onChange }: SectionEditorProps) => (
   <div className="section-card items">
@@ -920,10 +1230,17 @@ const ExperienceEditor = ({ active, onChange }: SectionEditorProps) => (
       <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, experience: [...r.content.experience, { id: createId('exp'), company: '', role: '', location: '', startDate: '', endDate: '', highlights: [''] }] } }))}><Plus />Add</button>
     </div>
     {active.content.experience.map((item, index) => (
-      <article className="item-card" key={item.id}>
+      <article className={`item-card${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
         <div className="item-card-head">
           <GripVertical aria-hidden="true" />
           <strong>{item.role || 'Untitled role'}</strong>
+          <button
+            className="ghost-button item-hide"
+            aria-label={item.hidden ? 'Show entry' : 'Hide entry'}
+            onClick={() => onChange((r) => updateExperience(r, index, { hidden: !item.hidden }))}
+          >
+            {item.hidden ? <EyeOff /> : <Eye />}
+          </button>
           <button
             className="ghost-button danger item-delete"
             aria-label="Delete entry"
@@ -954,10 +1271,17 @@ const EducationEditor = ({ active, onChange }: SectionEditorProps) => (
       <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, education: [...r.content.education, { id: createId('edu'), school: '', degree: '', location: '', startDate: '', endDate: '', highlights: [''] }] } }))}><Plus />Add</button>
     </div>
     {active.content.education.map((item, index) => (
-      <article className="item-card" key={item.id}>
+      <article className={`item-card${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
         <div className="item-card-head">
           <GripVertical aria-hidden="true" />
           <strong>{item.school || 'Untitled school'}</strong>
+          <button
+            className="ghost-button item-hide"
+            aria-label={item.hidden ? 'Show entry' : 'Hide entry'}
+            onClick={() => onChange((r) => updateEducation(r, index, { hidden: !item.hidden }))}
+          >
+            {item.hidden ? <EyeOff /> : <Eye />}
+          </button>
           <button
             className="ghost-button danger item-delete"
             aria-label="Delete entry"
@@ -988,10 +1312,17 @@ const ProjectsEditor = ({ active, onChange }: SectionEditorProps) => (
       <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, projects: [...r.content.projects, { id: createId('project'), name: '', description: '', highlights: [''], links: [] }] } }))}><Plus />Add</button>
     </div>
     {active.content.projects.map((item, index) => (
-      <article className="item-card" key={item.id}>
+      <article className={`item-card${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
         <div className="item-card-head">
           <GripVertical aria-hidden="true" />
           <strong>{item.name || 'Untitled project'}</strong>
+          <button
+            className="ghost-button item-hide"
+            aria-label={item.hidden ? 'Show entry' : 'Hide entry'}
+            onClick={() => onChange((r) => updateProjects(r, index, { hidden: !item.hidden }))}
+          >
+            {item.hidden ? <EyeOff /> : <Eye />}
+          </button>
           <button
             className="ghost-button danger item-delete"
             aria-label="Delete entry"
@@ -1047,10 +1378,17 @@ const CustomSectionsEditor = ({ active, onChange }: SectionEditorProps) => (
       <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, customSections: [...r.content.customSections, { id: createId('custom'), title: '', body: '' }] } }))}><Plus />Add</button>
     </div>
     {active.content.customSections.map((item, index) => (
-      <article className="item-card" key={item.id}>
+      <article className={`item-card${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
         <div className="item-card-head">
           <GripVertical aria-hidden="true" />
           <strong>{item.title || 'Untitled section'}</strong>
+          <button
+            className="ghost-button item-hide"
+            aria-label={item.hidden ? 'Show entry' : 'Hide entry'}
+            onClick={() => onChange((r) => updateCustomSections(r, index, { hidden: !item.hidden }))}
+          >
+            {item.hidden ? <EyeOff /> : <Eye />}
+          </button>
           <button
             className="ghost-button danger item-delete"
             aria-label="Delete entry"
@@ -1076,6 +1414,70 @@ const Field = ({ label, children }: { label: string; children: ReactNode }) => (
   </label>
 );
 
+type ProfileTextFieldProps = {
+  field: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>;
+  hidden: boolean;
+  label: string;
+  onChange: SectionEditorProps['onChange'];
+  parseValue?: (value: string) => string | string[];
+  type?: string;
+  value: string;
+};
+
+const ProfileTextField = ({ field, hidden, label, onChange, parseValue, type = 'text', value }: ProfileTextFieldProps) => {
+  const inputId = `profile-${field}`;
+  return (
+    <div className={`profile-field-row${hidden ? ' profile-field-hidden' : ''}`}>
+      <label className="field-label" htmlFor={inputId}>{label}</label>
+      <input
+        id={inputId}
+        type={type}
+        value={value}
+        onChange={(e) => onChange((r) => updateProfileField(r, field, parseValue ? parseValue(e.target.value) : e.target.value))}
+      />
+      <button
+        className="ghost-button item-hide"
+        aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
+        title={hidden ? `Show ${label}` : `Hide ${label}`}
+        onClick={() => onChange((r) => toggleProfileField(r, field))}
+      >
+        {hidden ? <EyeOff /> : <Eye />}
+      </button>
+    </div>
+  );
+};
+
+type ProfileNestedTextFieldProps = {
+  group: 'stackoverflow' | 'googleScholar';
+  hidden: boolean;
+  keyName: 'id' | 'name';
+  label: string;
+  onChange: SectionEditorProps['onChange'];
+  value: string;
+};
+
+const ProfileNestedTextField = ({ group, hidden, keyName, label, onChange, value }: ProfileNestedTextFieldProps) => {
+  const inputId = `profile-${group}-${keyName}`;
+  return (
+    <div className={`profile-field-row${hidden ? ' profile-field-hidden' : ''}`}>
+      <label className="field-label" htmlFor={inputId}>{label}</label>
+      <input
+        id={inputId}
+        value={value}
+        onChange={(e) => onChange((r) => updateNestedProfileField(r, group, keyName, e.target.value))}
+      />
+      <button
+        className="ghost-button item-hide"
+        aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
+        title={hidden ? `Show ${label}` : `Hide ${label}`}
+        onClick={() => onChange((r) => toggleProfileField(r, group))}
+      >
+        {hidden ? <EyeOff /> : <Eye />}
+      </button>
+    </div>
+  );
+};
+
 const PreviewPanel = ({
   activeTemplateName,
   artifact,
@@ -1093,16 +1495,7 @@ const PreviewPanel = ({
   const formattedUrl = pdfUrl ? formatPdfPreviewUrl(pdfUrl) : '';
 
   return (
-    <aside className="preview-pane" aria-label="PDF preview">
-      <div className="preview-toolbar" role="toolbar" aria-label="Preview actions">
-        <button aria-label="Layout" title="Layout"><Layers /></button>
-        <button aria-label="Grammar check" title="Grammar check"><Sparkles /></button>
-        <button aria-label="Download PDF" title="Download PDF"><Download /></button>
-        <button aria-label="Duplicate resume" title="Duplicate resume"><Copy /></button>
-        <button aria-label="Collapse panels" title="Collapse panels"><PanelLeftClose /></button>
-        <button aria-label="Home" title="Home"><Home /></button>
-        <button aria-label="GitHub help" title="GitHub help"><Github /></button>
-      </div>
+    <aside className="preview-pane" aria-label="Browser PDF preview">
       <div className="preview-status">
         <StatusPill icon={<FileCheck2 />} label="Layout" value={activeTemplateName} />
         <StatusPill icon={cleanCompile ? <CheckCircle2 /> : <Clock3 />} label="PDF" value={cleanCompile ? 'Clean' : artifact?.status ?? 'Stale'} tone={cleanCompile ? 'good' : 'warn'} />
@@ -1185,6 +1578,87 @@ const editField = (resume: ResumeRecord, field: string, update: (resume: ResumeR
   const updated = update(resume);
   const reviewed = clearReviewMarkersForField(updated, field);
   return reviewed === updated ? touchResume(updated) : reviewed;
+};
+
+const updateProfileField = (
+  resume: ResumeRecord,
+  key: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>,
+  value: string | string[]
+) =>
+  editField(resume, `content.profile.${key}`, (next) => ({
+    ...next,
+    content: {
+      ...next.content,
+      profile: {
+        ...next.content.profile,
+        [key]: value
+      }
+    }
+  }));
+
+const updateNestedProfileField = (
+  resume: ResumeRecord,
+  group: 'stackoverflow' | 'googleScholar',
+  key: 'id' | 'name',
+  value: string
+) =>
+  editField(resume, `content.profile.${group}.${key}`, (next) => ({
+    ...next,
+    content: {
+      ...next.content,
+      profile: {
+        ...next.content.profile,
+        [group]: {
+          ...next.content.profile[group],
+          [key]: value
+        }
+      }
+    }
+  }));
+
+const toggleProfileField = (resume: ResumeRecord, field: ProfileFieldKey) => {
+  const hiddenFields = new Set(resume.content.profile.hiddenFields ?? []);
+  hiddenFields.has(field) ? hiddenFields.delete(field) : hiddenFields.add(field);
+  return editField(resume, `content.profile.${field}`, (next) => ({
+    ...next,
+    content: {
+      ...next.content,
+      profile: {
+        ...next.content.profile,
+        hiddenFields: [...hiddenFields]
+      }
+    }
+  }));
+};
+
+const profileHighlightsForResume = (resume: ResumeRecord): ProfileHighlightItem[] => {
+  if (resume.content.profileHighlights?.length) return resume.content.profileHighlights;
+  return resume.content.summary
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((text, index) => ({ id: `summary-highlight-${index}`, text }));
+};
+
+const updateProfileHighlights = (resume: ResumeRecord, profileHighlights: ProfileHighlightItem[]) =>
+  editField(resume, 'content.profileHighlights', (next) => ({
+    ...next,
+    content: {
+      ...next.content,
+      summary: profileHighlights.map((item) => item.text).filter(Boolean).join('\n'),
+      profileHighlights
+    }
+  }));
+
+const updateProfileHighlight = (
+  resume: ResumeRecord,
+  index: number,
+  patchValue: Partial<ProfileHighlightItem>
+) => {
+  const profileHighlights = profileHighlightsForResume(resume).map((item, itemIndex) => (
+    itemIndex === index ? { ...item, ...patchValue } : item
+  ));
+  return updateProfileHighlights(resume, profileHighlights);
 };
 
 const patch = (resume: ResumeRecord, key: keyof ResumeRecord['content']['profile'], value: string) =>

@@ -303,6 +303,10 @@
 % Usage: \github{<github-nick>}
 \newcommand*{\github}[1]{\def\@github{#1}}
 
+% Defines writer's gitlab (optional)
+% Usage: \gitlab{<gitlab-nick>}
+\newcommand*{\gitlab}[1]{\def\@gitlab{#1}}
+
 % Defines writer's linked-in (optional)
 % Usage: \linkedin{<linked-in-nick>}
 \newcommand*{\linkedin}[1]{\def\@linkedin{#1}}
@@ -320,6 +324,49 @@
 % Defines writer's twitter (optional)
 % Usage: \twitter{<twitter handle>}
 \newcommand*{\twitter}[1]{\def\@twitter{#1}}
+
+% Defines writer's x (formerly twitter) (optional)
+% Usage: \x{<x account>}
+\newcommand*{\x}[1]{\def\@x{#1}}
+
+% Defines writer's reddit (optional)
+% Usage: \reddit{<reddit account>}
+\newcommand*{\reddit}[1]{\def\@reddit{#1}}
+
+% Defines writer's medium profile (optional)
+% Usage: \medium{<medium account>}
+\newcommand*{\medium}[1]{\def\@medium{#1}}
+
+% Defines writer's kaggle (optional)
+% Usage: \kaggle{<kaggle handle>}
+\newcommand*{\kaggle}[1]{\def\@kaggle{#1}}
+
+% Defines writer's Hackerrank (optional)
+% Usage: \hackerrank{<Hackerrank profile name>}
+\newcommand*{\hackerrank}[1]{\def\@hackerrank{#1}}
+
+% Defines writer's Telegram (optional)
+% Usage: \telegram{<Telegram username>}
+\newcommand*{\telegram}[1]{\def\@telegram{#1}}
+
+% Defines writer's google scholar profile (optional)
+% Usage: \googlescholar{<googlescholar userid>}{<googlescholar username>}
+% e.g.https://scholar.google.co.uk/citations?user=wpZDx1cAAAAJ
+% would be \googlescholar{wpZDx1cAAAAJ}{Name-to-display-next-icon}
+% If 'googlescholar-name' is not provided than it defaults to
+% '\firstname \lastname'
+\newcommand*{\googlescholar}[2]{%
+  \def\@googlescholarid{#1}%
+  \ifthenelse{\equal{#2}{}}{%
+    \def\@googlescholarname{\@firstname~\@lastname}%
+  }{%
+    \def\@googlescholarname{#2}%
+  }%
+}
+
+% Defines writer's extra information (optional)
+% Usage: \extrainfo{<extra information>}
+\newcommand*{\extrainfo}[1]{\def\@extrainfo{#1}}
 
 % Defines writer's quote (optional)
 % Usage: \quote{<quote>}
@@ -412,7 +459,7 @@
         {
           \ifbool{isstart}
             {
-              \setbool{istart}{false} 
+              \setbool{isstart}{false}
             }
             {\@headersocialsep}
           \href{mailto:\@email}{\faEnvelope\ \@email}
@@ -422,7 +469,7 @@
         {
           \ifbool{isstart}
             {
-              \setbool{istart}{false} 
+              \setbool{isstart}{false}
             }
             {\@headersocialsep}
           \href{http://\@homepage}{\faHome\ \@homepage}
@@ -432,17 +479,27 @@
         {
           \ifbool{isstart}
             {
-              \setbool{istart}{false} 
+              \setbool{isstart}{false}
             }
             {\@headersocialsep}
           \href{https://\@github}{\faGithubSquare\ \@github}
+        }
+      \ifthenelse{\isundefined{\@gitlab}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \href{https://gitlab.com/\@gitlab}{\faGit\ \@gitlab}
         }
       \ifthenelse{\isundefined{\@stackoverflowid}}
         {}
         {
           \ifbool{isstart}
             {
-              \setbool{istart}{false} 
+              \setbool{isstart}{false}
             }
             {\@headersocialsep}
           \href{https://stackoverflow.com/users/\@stackoverflowid}{\faStackOverflow\ \@stackoverflowname}
@@ -452,7 +509,7 @@
         {
           \ifbool{isstart}
             {
-              \setbool{istart}{false} 
+              \setbool{isstart}{false}
             }
             {\@headersocialsep}
           \href{https://\@linkedin}{\faLinkedinSquare\ \@linkedin}
@@ -462,20 +519,100 @@
         {
           \ifbool{isstart}
             {
-              \setbool{istart}{false} 
+              \setbool{isstart}{false}
             }
             {\@headersocialsep}
           \href{https://twitter.com/\@twitter}{\faTwitter\ \@twitter}
+        }
+      \ifthenelse{\isundefined{\@x}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \href{https://x.com/\@x}{\faTwitter\ \@x}
         }
       \ifthenelse{\isundefined{\@skype}}
         {}
         {
           \ifbool{isstart}
             {
-              \setbool{istart}{false} 
+              \setbool{isstart}{false}
             }
             {\@headersocialsep}
           \faSkype\ \@skype
+        }
+      \ifthenelse{\isundefined{\@reddit}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \href{https://www.reddit.com/user/\@reddit}{\faReddit\ \@reddit}
+        }
+      \ifthenelse{\isundefined{\@medium}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \href{https://medium.com/@\@medium}{\faMedium\ \@medium}
+        }
+      \ifthenelse{\isundefined{\@kaggle}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \href{https://kaggle.com/\@kaggle}{\faCode\ \@kaggle}
+        }
+      \ifthenelse{\isundefined{\@hackerrank}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \href{https://www.hackerrank.com/\@hackerrank}{\faTerminal\ \@hackerrank}
+        }
+      \ifthenelse{\isundefined{\@telegram}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \href{https://t.me/\@telegram}{\faPaperPlane\ \@telegram}
+        }
+      \ifthenelse{\isundefined{\@googlescholarid}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \href{https://scholar.google.com/citations?user=\@googlescholarid}{\faGraduationCap\ \@googlescholarname}
+        }
+      \ifthenelse{\isundefined{\@extrainfo}}
+        {}
+        {
+          \ifbool{isstart}
+            {
+              \setbool{isstart}{false}
+            }
+            {\@headersocialsep}
+          \@extrainfo
         }
     } \\
     \ifthenelse{\isundefined{\@quote}}

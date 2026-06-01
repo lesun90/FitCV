@@ -56,7 +56,8 @@ describe('resume model', () => {
       'new-page',
       'projects',
       'skills',
-      'awards'
+      'awards',
+      'customSections'
     ]);
     expect(normalized.templateLayouts['awesome-cv'].find((module) => module.kind === 'section' && module.section === 'projects')).toMatchObject({ enabled: false });
   });
@@ -70,7 +71,7 @@ describe('resume model', () => {
         ...resume.templateLayouts,
         'awesome-cv': [
           ...awesomeLayout.slice(0, 1),
-          { id: 'space-test', kind: 'space' as const, enabled: true, size: 'medium' as const },
+          { id: 'space-test', kind: 'space' as const, enabled: true, value: 12 },
           ...awesomeLayout.slice(1)
         ]
       }

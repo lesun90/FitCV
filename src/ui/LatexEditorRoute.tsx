@@ -21,6 +21,7 @@ import {
   busyTexLicenseReview,
   checkLatexCompilerCacheState,
   compileLatexProject,
+  warmUpLatexRunner,
   type LatexCompileResult,
   type LatexCompilerCacheState,
   type LatexCompilerEngine
@@ -75,6 +76,7 @@ export const LatexEditorRoute = () => {
         activePath: firstMain,
         mainFile: firstMain
       });
+      warmUpLatexRunner();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to load bundled LaTeX project.');
     } finally {
@@ -95,7 +97,7 @@ export const LatexEditorRoute = () => {
     const gen = ++compileGenRef.current;
     setBusy('Preparing browser compile');
     if (!opts?.auto) setShowLogs(true);
-    const result = await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine });
+    const result = await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine, fast: opts?.auto });
     if (gen !== compileGenRef.current) return;
     setCompileResult(result);
     setBusy('');
@@ -196,7 +198,7 @@ export const LatexEditorRoute = () => {
             <div className="latex-preview-paper">
               {latexPdfUrl ? (
                 <div className="latex-pdf-wrap">
-                  <iframe title="LaTeX PDF preview" src={formatPdfPreviewUrl(latexPdfUrl)} />
+                  <iframe key={latexPdfUrl} title="LaTeX PDF preview" src={formatPdfPreviewUrl(latexPdfUrl)} />
                   {busy && (
                     <div className="latex-recompile-overlay" aria-label="Recompiling">
                       <Loader2 className="latex-spin" />

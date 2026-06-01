@@ -9,6 +9,7 @@ export type LatexCompileRequest = {
   files: LatexProjectFile[];
   mainFile: string;
   engine: LatexCompilerEngine;
+  fast?: boolean;
 };
 
 export type LatexCompileResult = {
@@ -65,8 +66,8 @@ export const compileLatexProject = async (request: LatexCompileRequest): Promise
       input: mainFile.contents,
       mainTexPath: request.mainFile,
       additionalFiles: request.files.filter((file) => file.path !== request.mainFile).map(toBusyTexFile),
-      rerun: true,
-      verbose: 'info'
+      rerun: !request.fast,
+      verbose: request.fast ? 'silent' : 'info'
     });
 
     return {
@@ -93,14 +94,29 @@ export const compileLatexProject = async (request: LatexCompileRequest): Promise
   }
 };
 
-const createCompiler = (engine: LatexCompilerEngine) => {
-  const busytexBasePath = import.meta.env.VITE_BUSYTEX_BASE_PATH ?? '/core/busytex';
-  const runner = new BusyTexRunner({
-    busytexBasePath,
-    ...getBusyTexDataPackageConfig(busytexBasePath),
-    verbose: true
-  });
+export const warmUpLatexRunner = (): void => {
+  const runner = getSharedRunner();
+  if (!runner.isInitialized()) {
+    void runner.initialize();
+  }
+};
 
+let sharedRunner: BusyTexRunner | null = null;
+
+const getSharedRunner = (): BusyTexRunner => {
+  if (!sharedRunner) {
+    const busytexBasePath = import.meta.env.VITE_BUSYTEX_BASE_PATH ?? '/core/busytex';
+    sharedRunner = new BusyTexRunner({
+      busytexBasePath,
+      ...getBusyTexDataPackageConfig(busytexBasePath),
+      verbose: true
+    });
+  }
+  return sharedRunner;
+};
+
+const createCompiler = (engine: LatexCompilerEngine) => {
+  const runner = getSharedRunner();
   if (engine === 'pdflatex') return new PdfLatex(runner, true);
   if (engine === 'lualatex') return new LuaLatex(runner, true);
   return new XeLatex(runner, true);
