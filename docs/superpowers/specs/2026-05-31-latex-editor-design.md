@@ -125,14 +125,6 @@ Use the FitCV editor design language:
 - Compact controls and icon-first buttons.
 - No bright SaaS gradients, neon, glassmorphism, or decorative blobs.
 
-The LaTeX editor may use dark technical chrome for the file tree and editor area:
-
-- Dark charcoal/slate top chrome and file tree.
-- Dark editor theme by default.
-- Warm gray/off-white PDF preview canvas with a centered paper sheet.
-- Charcoal primary actions.
-- Green only for compile success, running state, and the compile accent.
-- Restrained amber/red for warnings and failures.
 
 ## Core Components
 

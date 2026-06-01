@@ -1,0 +1,55 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%     Configuration
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\documentclass[11pt, a4paper]{awesome-cv}
+\usepackage{amssymb}
+\fontdir[fonts/]
+
+\newcommand*{\sectiondir}{resume/}
+
+% Accent color — options: awesome-emerald, awesome-skyblue, awesome-red,
+%   awesome-pink, awesome-orange, awesome-nephritis, awesome-concrete, awesome-darknight
+\colorlet{awesome}{awesome-red}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%     3rd party packages
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{import}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%     Personal Data
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\name{First}{Last}
+% \address{123 Main Street, City, State, ZIP}
+\mobile{(XXX) XXX-XXXX}
+\email{your.email@example.com}
+\homepage{yourwebsite.com}
+\github{github.com/yourusername}
+% \linkedin{linkedin.com/in/yourprofile/}
+% \position{Your Title{\enskip\cdotp\enskip}Your Specialization}
+% \quote{``Your inspiring quote here."}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%     Content
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\makecvfooter
+  {\today}
+  {First Last~~~·~~~Resume}
+  {\thepage}
+
+\begin{document}
+\makecvheader
+
+\import{\sectiondir}{highlight.tex}
+\import{\sectiondir}{education.tex}
+\import{\sectiondir}{experience.tex}
+\newpage
+\import{\sectiondir}{patents.tex}
+\import{\sectiondir}{projects.tex}
+\import{\sectiondir}{skills.tex}
+\newpage
+% \import{\sectiondir}{research.tex}
+\import{\sectiondir}{publications.tex}
+% \import{\sectiondir}{honors.tex}
+% \import{\sectiondir}{activities.tex}
+\end{document}

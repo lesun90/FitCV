@@ -4,6 +4,7 @@ import { App } from './App';
 
 describe('FitCV UI shell', () => {
   beforeEach(async () => {
+    window.history.pushState({}, '', '/');
     await indexedDB.deleteDatabase('fitcv-local-workbench');
   });
 
@@ -25,5 +26,17 @@ describe('FitCV UI shell', () => {
     expect(screen.getByRole('button', { name: 'Collapse panels' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Home' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'GitHub help' })).toBeInTheDocument();
+  });
+
+  it('shows the standalone LaTeX editor route without linking from the main dashboard', async () => {
+    window.history.pushState({}, '', '/latexeditor');
+
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'LaTeX Workbench' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Bundled LaTeX projects' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open Awesome Resume/i })).toBeInTheDocument();
+    expect(screen.getByText(/compiler integration is paused for license review/i)).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'My Resumes' })).not.toBeInTheDocument();
   });
 });

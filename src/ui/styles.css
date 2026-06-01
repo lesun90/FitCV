@@ -44,6 +44,7 @@ button,
 .chrome-button,
 .chrome-icon,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -106,6 +107,7 @@ button svg,
 }
 
 input,
+select,
 textarea {
   background: #fff;
   border: 1px solid var(--line);
@@ -114,6 +116,11 @@ textarea {
   min-width: 0;
   padding: 10px 12px;
   width: 100%;
+}
+
+select {
+  min-height: 36px;
+  padding: 6px 32px 6px 10px;
 }
 
 textarea {
@@ -143,6 +150,469 @@ p {
   display: grid;
   min-height: 100dvh;
   place-items: center;
+}
+
+/* Standalone LaTeX editor */
+
+.latex-shell {
+  background:
+    linear-gradient(180deg, rgba(251, 250, 247, 0.96), rgba(239, 238, 233, 0.92)),
+    repeating-linear-gradient(0deg, rgba(27, 27, 24, 0.018) 0 1px, transparent 1px 32px);
+  color: var(--ink);
+  min-height: 100dvh;
+}
+
+.latex-topbar {
+  align-items: center;
+  background: rgba(249, 249, 247, 0.96);
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 14px;
+  min-height: 62px;
+  padding: 0 18px;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+.magic-brand em {
+  color: var(--muted);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.latex-route-note {
+  border-left: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  padding-left: 14px;
+}
+
+.latex-topbar-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.latex-select-label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.latex-select-label select {
+  max-width: 180px;
+}
+
+.latex-launcher {
+  align-items: stretch;
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  margin: 0 auto;
+  max-width: 1180px;
+  padding: 72px 24px;
+}
+
+.latex-launcher-copy,
+.latex-license-card {
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+  padding: 26px;
+}
+
+.latex-launcher-copy h1 {
+  font-family: Newsreader, Georgia, "Times New Roman", serif;
+  font-size: 46px;
+  letter-spacing: 0;
+  line-height: 1;
+  margin: 0 0 12px;
+}
+
+.latex-launcher-copy p,
+.latex-license-card p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 20px;
+  max-width: 680px;
+}
+
+.latex-launch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 16px 0;
+}
+
+.latex-project-list {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0 0;
+}
+
+.latex-project-card {
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 72px;
+  text-align: left;
+  width: 100%;
+}
+
+.latex-project-card span {
+  display: grid;
+  gap: 3px;
+}
+
+.latex-project-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.latex-license-card {
+  align-content: start;
+  display: grid;
+  gap: 14px;
+}
+
+.latex-license-card > svg {
+  color: var(--amber);
+  height: 28px;
+  width: 28px;
+}
+
+.latex-license-card strong {
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.latex-license-card dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.latex-license-card dl div {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 2px;
+  padding-top: 10px;
+}
+
+.latex-license-card dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.latex-license-card dd {
+  font-size: 13px;
+  margin: 0;
+}
+
+.latex-workbench {
+  display: grid;
+  grid-template-columns: minmax(250px, 18vw) minmax(430px, 34vw) minmax(480px, 1fr);
+  min-height: calc(100dvh - 62px);
+}
+
+.latex-file-panel,
+.latex-editor-pane,
+.latex-preview-pane {
+  min-width: 0;
+}
+
+.latex-file-panel {
+  background: rgba(255, 255, 255, 0.78);
+  border-right: 1px solid var(--line);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 16px 14px;
+}
+
+.latex-panel-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.latex-panel-head div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.latex-panel-head span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.latex-panel-head strong {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readonly-badge {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 760;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.readonly-badge svg {
+  height: 13px;
+  width: 13px;
+}
+
+.latex-file-tree {
+  display: grid;
+  gap: 4px;
+  overflow: auto;
+}
+
+.latex-file-tree details {
+  display: grid;
+  gap: 4px;
+}
+
+.latex-file-tree summary,
+.latex-file {
+  align-items: center;
+  border-radius: 7px;
+  color: var(--muted);
+  display: flex;
+  font-size: 13px;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 8px;
+}
+
+.latex-file-tree summary {
+  cursor: pointer;
+  font-weight: 760;
+}
+
+.latex-file-tree summary svg,
+.latex-file svg {
+  height: 15px;
+  width: 15px;
+}
+
+.latex-folder-children {
+  border-left: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+  margin-left: 12px;
+  padding-left: 8px;
+}
+
+.latex-file {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.latex-file:hover,
+.latex-file.active {
+  background: var(--surface-soft);
+  border-color: var(--line);
+  color: var(--ink);
+  transform: none;
+}
+
+.latex-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.latex-load-report {
+  background: var(--surface-warm);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.latex-load-report span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.latex-editor-pane {
+  background: #fbfaf7;
+  border-right: 1px solid var(--line);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.latex-editor-tabs {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 12px;
+}
+
+.latex-editor-tabs button {
+  max-width: min(100%, 360px);
+  min-height: 32px;
+  overflow: hidden;
+}
+
+.latex-editor-tabs button svg {
+  flex: 0 0 auto;
+}
+
+.latex-editor-tabs button:not(.selected) {
+  background: transparent;
+}
+
+.latex-editor-tabs span {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.latex-code-editor {
+  background: #fffdf9;
+  border: 0;
+  border-radius: 0;
+  color: #1d252c;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  min-height: 100%;
+  outline-offset: -3px;
+  padding: 18px 20px 48px;
+  resize: none;
+}
+
+.latex-empty-editor {
+  align-content: center;
+  color: var(--muted);
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  min-height: 420px;
+  padding: 28px;
+  text-align: center;
+}
+
+.latex-empty-editor svg {
+  color: var(--faint);
+  height: 34px;
+  width: 34px;
+}
+
+.latex-empty-editor strong {
+  color: var(--ink);
+}
+
+.latex-preview-pane {
+  align-content: start;
+  background: linear-gradient(180deg, #efefed, #e7e6e1);
+  display: grid;
+  gap: 16px;
+  max-height: calc(100dvh - 62px);
+  overflow: auto;
+  padding: 18px;
+}
+
+.latex-preview-paper {
+  background: #fff;
+  box-shadow:
+    0 1px 0 rgba(27, 27, 24, 0.08),
+    0 24px 56px rgba(27, 27, 24, 0.14);
+  display: grid;
+  justify-self: center;
+  min-height: min(820px, calc(100dvh - 250px));
+  place-items: center;
+  width: min(100%, 680px);
+}
+
+.latex-paper-placeholder {
+  color: var(--muted);
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  max-width: 380px;
+  padding: 32px;
+  text-align: center;
+}
+
+.latex-paper-placeholder svg {
+  color: var(--green);
+  height: 36px;
+  width: 36px;
+}
+
+.latex-paper-placeholder h2 {
+  color: var(--ink);
+  font-size: 20px;
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.latex-paper-placeholder p {
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.latex-compiler-panel {
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  justify-self: center;
+  padding: 12px;
+  width: min(100%, 680px);
+}
+
+.latex-diagnostics {
+  display: grid;
+  gap: 8px;
+}
+
+.latex-diagnostics p {
+  background: var(--amber-soft);
+  border: 1px solid rgba(152, 98, 12, 0.22);
+  border-radius: var(--radius);
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px;
 }
 
 .top-chrome {
@@ -1559,6 +2029,15 @@ pre {
   .editor {
     max-height: none;
   }
+
+  .latex-workbench {
+    grid-template-columns: 280px minmax(420px, 1fr);
+  }
+
+  .latex-preview-pane {
+    grid-column: 1 / -1;
+    max-height: none;
+  }
 }
 
 @media (max-width: 820px) {
@@ -1638,6 +2117,62 @@ pre {
 
   .paper-contact span {
     justify-content: flex-start;
+  }
+
+  .latex-topbar {
+    align-items: stretch;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    position: static;
+  }
+
+  .latex-route-note {
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  .latex-topbar-actions {
+    align-items: stretch;
+    flex-wrap: wrap;
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .latex-select-label {
+    align-items: start;
+    display: grid;
+    flex: 1 1 150px;
+  }
+
+  .latex-select-label select {
+    max-width: none;
+  }
+
+  .latex-launcher,
+  .latex-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .latex-launcher {
+    padding: 24px 16px 48px;
+  }
+
+  .latex-file-panel,
+  .latex-editor-pane {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .latex-file-panel {
+    grid-template-rows: auto auto auto;
+  }
+
+  .latex-code-editor {
+    min-height: 520px;
+  }
+
+  .latex-preview-pane {
+    padding: 16px;
   }
 }
 
