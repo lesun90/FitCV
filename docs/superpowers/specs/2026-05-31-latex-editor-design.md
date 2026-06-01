@@ -330,7 +330,7 @@ Fixture compile smoke test:
 
 ## Version-One Decisions
 
-- Runtime assets should come from a pinned TeXlyre BusyTeX package or release. If the implementation cannot consume the package directly, the release assets should be vendored under `public/vendor/busytex/` and served as static files by Vite.
-- The selected BusyTeX distribution must pass license review before implementation proceeds.
+- Runtime assets come from pinned `texlyre-busytex@1.1.1` and its `assets-v1.1.1` release archive. The npm wrapper is `AGPL-3.0-or-later`; FitCV accepts those obligations for this implementation.
+- BusyTeX runtime assets are downloaded locally with `npm run busytex:assets` into `public/core/busytex/`, which is intentionally ignored by git because the first release does not commit the full offline asset bundle.
 - Browsers without File System Access API support can open bundled read-only templates but cannot edit local folders in the first version.
 - When FitCV compiles structured resume data through a LaTeX template project, it should generate `fitcv-data.tex` at the project root. Templates include that file and treat it as the boundary between structured FitCV data and user-owned template layout.

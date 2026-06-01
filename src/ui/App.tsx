@@ -248,6 +248,7 @@ const LatexEditorRoute = () => {
   const activeFile = project?.workingFiles.find((file) => file.path === project.activePath);
   const textFiles = project?.workingFiles.filter((file): file is Extract<LatexProjectFile, { kind: 'text' }> => file.kind === 'text') ?? [];
   const tree = useMemo(() => buildLatexFileTree(project?.workingFiles ?? []), [project?.workingFiles]);
+  const latexPdfUrl = useMemo(() => (compileResult?.pdfBlob ? URL.createObjectURL(compileResult.pdfBlob) : ''), [compileResult?.pdfBlob]);
 
   const openBundledProject = async (id: string) => {
     try {
@@ -316,7 +317,7 @@ const LatexEditorRoute = () => {
           </label>
           <StatusPill icon={<LockKeyhole />} label="Compiler" value={formatCacheState(getLatexCompilerCacheState())} tone="warn" />
           <button className="chrome-button" disabled={!project || Boolean(busy)} onClick={compileProject}><Play />Compile</button>
-          <button className="chrome-button primary" disabled><Download />PDF</button>
+          <button className="chrome-button primary" disabled={!compileResult?.pdfBlob} onClick={() => compileResult?.pdfBlob && downloadBlob(compileResult.pdfBlob, `${project?.displayName ?? 'latex-project'}.pdf`)}><Download />PDF</button>
         </div>
       </header>
 
@@ -363,11 +364,15 @@ const LatexEditorRoute = () => {
 
           <aside className="latex-preview-pane" aria-label="LaTeX PDF preview and logs">
             <div className="latex-preview-paper">
-              <div className="latex-paper-placeholder">
-                <Braces />
-                <h2>PDF preview waits for compiler approval</h2>
-                <p>Compile requests use the in-memory project map, but BusyTeX runtime code is blocked until license review clears a compatible distribution path.</p>
-              </div>
+              {latexPdfUrl ? (
+                <iframe title="LaTeX PDF preview" src={latexPdfUrl} />
+              ) : (
+                <div className="latex-paper-placeholder">
+                  <Braces />
+                  <h2>Ready for browser compile</h2>
+                  <p>Compile runs through BusyTeX with the current in-memory project map. If runtime assets are missing, the logs will show the asset path to configure.</p>
+                </div>
+              )}
             </div>
             <CompilerStatusPanel result={compileResult} busy={busy} />
           </aside>
@@ -413,8 +418,8 @@ const LatexLauncher = ({
     </div>
     <aside className="latex-license-card" aria-label="Compiler license status">
       <AlertTriangle />
-      <strong>Compiler integration is paused for license review.</strong>
-      <p>{busyTexLicenseReview.packageName}@{busyTexLicenseReview.version} currently reports {busyTexLicenseReview.license}. FitCV will not ship BusyTeX runtime code until the obligations are accepted or a compatible distribution strategy is selected.</p>
+      <strong>AGPL obligations accepted.</strong>
+      <p>{busyTexLicenseReview.packageName}@{busyTexLicenseReview.version} is enabled under {busyTexLicenseReview.license}. BusyTeX runtime assets are expected at the configured asset base path and project source still stays in the browser.</p>
       <dl>
         <div><dt>Source privacy</dt><dd>User project files stay in the browser.</dd></div>
         <div><dt>Asset cache</dt><dd>{formatCacheState(getLatexCompilerCacheState())}</dd></div>
@@ -469,7 +474,7 @@ const CompilerStatusPanel = ({ result, busy }: { result?: LatexCompileResult; bu
       </div>
       <StatusPill icon={<Clock3 />} label="Cache" value={formatCacheState(result?.cacheState ?? getLatexCompilerCacheState())} tone="warn" />
     </div>
-    <pre>{result?.logs.join('\n') ?? 'No compile has run yet. Source files remain local; static runtime/package requests may reveal package names once a compiler is enabled.'}</pre>
+    <pre>{result?.logs.join('\n') ?? 'No compile has run yet. Source files remain local; BusyTeX runtime and package requests may go to the configured static asset host.'}</pre>
     {result?.diagnostics.length ? (
       <div className="latex-diagnostics">
         {result.diagnostics.map((diagnostic) => <p key={diagnostic}>{diagnostic}</p>)}

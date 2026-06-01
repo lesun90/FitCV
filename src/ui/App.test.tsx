@@ -36,7 +36,7 @@ describe('FitCV UI shell', () => {
     expect(await screen.findByRole('heading', { name: 'LaTeX Workbench' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Bundled LaTeX projects' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Open Awesome Resume/i })).toBeInTheDocument();
-    expect(screen.getByText(/compiler integration is paused for license review/i)).toBeInTheDocument();
+    expect(screen.getByText(/AGPL obligations accepted/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'My Resumes' })).not.toBeInTheDocument();
   });
 });
