@@ -51,6 +51,17 @@ type ResumeRecord = {
 
 Existing `sectionOrder` can remain during migration and fallback rendering, but the module list should become the source of truth for adapter-backed layouts.
 
+All loaded, imported, created, and duplicated resumes should pass through a normalization helper:
+
+```ts
+const ensureTemplateLayouts = (resume: ResumeRecord): ResumeRecord => {
+  // Creates missing per-template layouts from adapter defaults.
+  // Preserves existing saved template layout arrays.
+};
+```
+
+This helper prevents UI and renderer code from needing scattered `templateLayouts ?? {}` checks. It also makes `.fitcv` archive imports and older IndexedDB records behave the same way as newly created resumes.
+
 ### Layout Modules
 
 ```ts
@@ -80,6 +91,8 @@ Section modules reference existing content by section key. They do not copy sect
 
 `enabled` lets users temporarily turn modules or layout controls off without deleting their placement.
 
+For adapter-backed templates, module `enabled` is the visibility source of truth. Existing `hiddenSections` remains for fallback templates that still use `sectionOrder`, but adapter-backed renderers and layout UI should ignore `hiddenSections` after normalization. When creating a default adapter layout from an older resume, `hiddenSections` may be used once to initialize matching section modules as disabled.
+
 ### Default Layouts
 
 When a resume has no saved layout for the active template, FitCV asks the template adapter for a default layout.
@@ -103,21 +116,33 @@ Only modules with content need to render. Empty section modules can remain in th
 FitCV should introduce a template adapter layer. The existing template registry remains the user-facing catalog, while adapters provide rendering behavior and section-type metadata.
 
 ```ts
+type TemplateKey = string;
+
+type LatexProjectRenderResult = {
+  files: LatexProjectFile[];
+  mainFile: string;
+  engine: 'xelatex' | 'pdflatex' | 'lualatex';
+  latexSource: string;
+  warnings: string[];
+};
+
 type TemplateAdapter = {
-  id: TemplateId;
+  id: TemplateKey;
   defaultLayout: (resume: ResumeRecord) => LayoutModule[];
   sectionTypes: TemplateSectionType[];
-  renderLatexProject?: (resume: ResumeRecord, modules: LayoutModule[]) => LatexProjectFile[];
+  renderLatexProject?: (resume: ResumeRecord, modules: LayoutModule[]) => LatexProjectRenderResult;
 };
 
 type TemplateSectionType = {
   id: string;
-  templateId: TemplateId;
+  templateId: TemplateKey;
   label: string;
   section: SectionKey;
   description: string;
 };
 ```
+
+`TemplateId` can remain a closed union for currently shipped curated templates during this feature. `TemplateKey` is the adapter identity type used at adapter boundaries and inside `templateLayouts`; it leaves room for user-installed or uploaded templates later without forcing this feature to implement dynamic template installation.
 
 Awesome CV's first section-types:
 
@@ -129,6 +154,8 @@ Awesome CV's first section-types:
 - `awesome-honors` for awards
 
 The editor does not need to show these names when there is only one available section-type for a section. They are stored so future templates can offer multiple section variants.
+
+Profile and header rendering are template chrome, not layout modules. Awesome CV should render `content.profile` into `\name`, contact commands, position/headline, and links outside the ordered module list. Profile editing remains in the existing editor surface rather than becoming a `Profile` layout row.
 
 ---
 
@@ -179,6 +206,8 @@ The compile artifact shape stays compatible:
 - `generatedText` remains available for checks and tests.
 
 Compile failures should preserve user data and report logs. If an older clean preview exists, the UI can continue showing it while marking the current compile as failed or stale.
+
+Fallback templates without adapters can continue using `sectionOrder` and `hiddenSections` until they are migrated to adapters. They do not need to expose the new module outline in the first implementation.
 
 ---
 
@@ -267,12 +296,15 @@ No validation path should delete content or layout modules automatically.
 
 Tests should cover:
 
+- Normalizing older saved resumes and imported archives with missing `templateLayouts`.
 - Creating a default Awesome CV per-template layout.
 - Switching templates without losing content.
 - Preserving separate layouts for separate templates.
+- Initializing adapter module `enabled` state from old `hiddenSections` once, then using module `enabled` as the source of truth.
 - Rendering `space` and `new-page` modules into Awesome CV LaTeX.
 - Skipping disabled layout controls.
 - Generating a BusyTeX project with required Awesome CV support files.
+- Returning `mainFile`, compiler engine, source summary, and warnings from adapter rendering.
 - Escaping LaTeX-sensitive user content.
 - Validating adapter-backed section-types in the template registry.
 - Keeping existing `pdf-lib` templates on the fallback compile path.
@@ -285,7 +317,7 @@ This design changes FitCV's foundation. The implementation should be incremental
 
 1. Add types, default layout helpers, and migration/fallback behavior.
 2. Add the Awesome CV adapter and renderer tests.
-3. Update compile selection to call BusyTeX for adapter-backed templates.
+3. Update compile selection to call BusyTeX for adapter-backed templates using the adapter's explicit `mainFile` and `engine`.
 4. Update the Layout section to show module rows.
 5. Move layout-control editing into the second column.
 6. Keep existing resume content editors working with selected section modules.
