@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { storage } from './storage';
+import { createResume } from '../domain/resume';
 
 describe('local storage service', () => {
   beforeEach(async () => {
@@ -28,5 +29,14 @@ describe('local storage service', () => {
 
     expect(await storage.listJobDescriptions()).toHaveLength(1);
     expect(await storage.listScoringReports()).toHaveLength(1);
+  });
+
+  it('normalizes resumes loaded from IndexedDB before returning them', async () => {
+    const resume = createResume('Stored Resume', 'awesome-cv');
+    delete (resume as Partial<typeof resume>).templateLayouts;
+
+    await storage.saveResume(resume);
+
+    expect((await storage.listResumes())[0].templateLayouts['awesome-cv']).toBeDefined();
   });
 });

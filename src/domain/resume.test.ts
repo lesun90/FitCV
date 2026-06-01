@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { clearReviewMarkersForField, createResume, duplicateResume, renameResume } from './resume';
+import { clearReviewMarkersForField, createResume, duplicateResume, ensureTemplateLayouts, renameResume, switchTemplate } from './resume';
 
 describe('resume model', () => {
   afterEach(() => {
@@ -37,6 +37,51 @@ describe('resume model', () => {
     expect(copy.title).toBe('Base Resume copy');
     expect(copy.createdAt).not.toBe(original.createdAt);
     expect(copy.content).toEqual(original.content);
+    expect(copy.templateLayouts).toEqual(original.templateLayouts);
+  });
+
+  it('normalizes adapter layouts without changing resume content', () => {
+    const resume = createResume('Awesome Resume', 'awesome-cv');
+    resume.hiddenSections = ['projects'];
+    delete (resume as Partial<typeof resume>).templateLayouts;
+
+    const normalized = ensureTemplateLayouts(resume);
+
+    expect(normalized.content).toEqual(resume.content);
+    expect(normalized.templateLayouts['awesome-cv'].map((module) => module.kind === 'section' ? module.section : module.kind)).toEqual([
+      'summary',
+      'education',
+      'experience',
+      'space',
+      'new-page',
+      'projects',
+      'skills',
+      'awards'
+    ]);
+    expect(normalized.templateLayouts['awesome-cv'].find((module) => module.kind === 'section' && module.section === 'projects')).toMatchObject({ enabled: false });
+  });
+
+  it('keeps independent layouts when switching templates', () => {
+    const resume = createResume('Switchable Resume', 'awesome-cv');
+    const awesomeLayout = resume.templateLayouts['awesome-cv'];
+    const withSpace = {
+      ...resume,
+      templateLayouts: {
+        ...resume.templateLayouts,
+        'awesome-cv': [
+          ...awesomeLayout.slice(0, 1),
+          { id: 'space-test', kind: 'space' as const, enabled: true, size: 'medium' as const },
+          ...awesomeLayout.slice(1)
+        ]
+      }
+    };
+
+    const classic = switchTemplate(withSpace, 'classic-ats');
+    const restored = switchTemplate(classic, 'awesome-cv');
+
+    expect(classic.content).toEqual(resume.content);
+    expect(classic.templateLayouts['classic-ats']).toBeDefined();
+    expect(restored.templateLayouts['awesome-cv'].some((module) => module.id === 'space-test')).toBe(true);
   });
 
   it('renames a resume while preserving content and updating metadata', () => {

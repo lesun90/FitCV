@@ -140,6 +140,37 @@ export const templates: TemplateRegistryEntry[] = [
       sampleResumeId: 'sample-modern-compact',
       expectedText: ['Ada Lovelace', 'Experience', 'Skills']
     }
+  },
+  {
+    id: 'awesome-cv',
+    name: 'Awesome CV',
+    description: 'A polished LaTeX layout with module-based spacing and page breaks.',
+    supportedSections: ['summary', 'experience', 'education', 'projects', 'skills', 'awards'],
+    requiredFields: ['content.profile.fullName', 'content.profile.email'],
+    atsNotes: ['Uses richer visual styling than Classic ATS', 'Custom sections are preserved but not shown in the first adapter'],
+    schema: {
+      fields: [
+        ...baseFields,
+        { path: 'content.projects', label: 'Projects', section: 'projects' }
+      ]
+    },
+    renderMapping: [
+      ...profileRenderMapping,
+      { fieldPath: 'content.experience', latexTarget: 'awesome.section.experience' },
+      { fieldPath: 'content.education', latexTarget: 'awesome.section.education' },
+      { fieldPath: 'content.projects', latexTarget: 'awesome.section.projects' },
+      { fieldPath: 'content.skills', latexTarget: 'awesome.section.skills' },
+      { fieldPath: 'content.awards', latexTarget: 'awesome.section.honors' }
+    ],
+    validationRules: requiredProfileRules,
+    browserCompatibility: {
+      engine: 'xelatex',
+      notes: ['Generated as an adapter-backed BusyTeX project from structured resume data.', 'Uses bundled Awesome CV class, style, and font assets.']
+    },
+    fixture: {
+      sampleResumeId: 'sample-awesome-cv',
+      expectedText: ['Ada Lovelace', 'Work Experience', 'Skills']
+    }
   }
 ];
 

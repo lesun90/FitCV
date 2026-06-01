@@ -1,4 +1,5 @@
-export type TemplateId = 'classic-ats' | 'modern-compact';
+export type TemplateId = 'classic-ats' | 'modern-compact' | 'awesome-cv';
+export type TemplateKey = string;
 
 export interface Profile {
   fullName: string;
@@ -66,6 +67,27 @@ export type SectionKey = keyof Pick<
   'summary' | 'experience' | 'education' | 'projects' | 'skills' | 'awards' | 'customSections'
 >;
 
+export type LayoutModule =
+  | {
+      id: string;
+      kind: 'section';
+      section: SectionKey;
+      sectionType: string;
+      enabled: boolean;
+      options?: Record<string, unknown>;
+    }
+  | {
+      id: string;
+      kind: 'space';
+      enabled: boolean;
+      size: 'small' | 'medium' | 'large';
+    }
+  | {
+      id: string;
+      kind: 'new-page';
+      enabled: boolean;
+    };
+
 export interface TemplateSettings {
   color: string;
   typography: string;
@@ -80,6 +102,7 @@ export interface ResumeRecord {
   activeTemplateId: TemplateId;
   sectionOrder: SectionKey[];
   hiddenSections: SectionKey[];
+  templateLayouts: Record<TemplateKey, LayoutModule[]>;
   content: ResumeContent;
   templateSettings: Record<string, TemplateSettings>;
   reviewMarkers: ReviewMarker[];

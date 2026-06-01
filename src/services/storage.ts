@@ -9,6 +9,7 @@ import type {
   ScoringReportRecord,
   UploadedFileAttachmentRecord
 } from '../domain/types';
+import { ensureTemplateLayouts } from '../domain/resume';
 
 interface FitcvDb extends DBSchema {
   resumes: {
@@ -89,58 +90,148 @@ const db = () =>
 
 export const storage = {
   async listResumes() {
-    return (await db()).getAll('resumes');
+    const database = await db();
+    try {
+      return (await database.getAll('resumes')).map(ensureTemplateLayouts);
+    } finally {
+      database.close();
+    }
   },
   async saveResume(resume: ResumeRecord) {
-    await (await db()).put('resumes', resume);
+    const database = await db();
+    try {
+      await database.put('resumes', ensureTemplateLayouts(resume));
+    } finally {
+      database.close();
+    }
   },
   async deleteResume(id: string) {
-    await (await db()).delete('resumes', id);
+    const database = await db();
+    try {
+      await database.delete('resumes', id);
+    } finally {
+      database.close();
+    }
   },
   async saveArtifact(artifact: CompileArtifact) {
-    await (await db()).put('artifacts', artifact);
+    const database = await db();
+    try {
+      await database.put('artifacts', artifact);
+    } finally {
+      database.close();
+    }
   },
   async listArtifacts() {
-    return (await db()).getAll('artifacts');
+    const database = await db();
+    try {
+      return database.getAll('artifacts');
+    } finally {
+      database.close();
+    }
   },
   async latestArtifact(resumeId: string) {
-    const artifacts = await (await db()).getAllFromIndex('artifacts', 'by-resume', resumeId);
-    return artifacts.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    const database = await db();
+    try {
+      const artifacts = await database.getAllFromIndex('artifacts', 'by-resume', resumeId);
+      return artifacts.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+    } finally {
+      database.close();
+    }
   },
   async listFittedCvs() {
-    return (await db()).getAll('fittedCvs');
+    const database = await db();
+    try {
+      return database.getAll('fittedCvs');
+    } finally {
+      database.close();
+    }
   },
   async saveFittedCv(fittedCv: FittedCvRecord) {
-    await (await db()).put('fittedCvs', fittedCv);
+    const database = await db();
+    try {
+      await database.put('fittedCvs', fittedCv);
+    } finally {
+      database.close();
+    }
   },
   async listJobDescriptions() {
-    return (await db()).getAll('jobDescriptions');
+    const database = await db();
+    try {
+      return database.getAll('jobDescriptions');
+    } finally {
+      database.close();
+    }
   },
   async saveJobDescription(jobDescription: JobDescriptionRecord) {
-    await (await db()).put('jobDescriptions', jobDescription);
+    const database = await db();
+    try {
+      await database.put('jobDescriptions', jobDescription);
+    } finally {
+      database.close();
+    }
   },
   async listScoringReports() {
-    return (await db()).getAll('scoringReports');
+    const database = await db();
+    try {
+      return database.getAll('scoringReports');
+    } finally {
+      database.close();
+    }
   },
   async saveScoringReport(scoringReport: ScoringReportRecord) {
-    await (await db()).put('scoringReports', scoringReport);
+    const database = await db();
+    try {
+      await database.put('scoringReports', scoringReport);
+    } finally {
+      database.close();
+    }
   },
   async listProviderSettings() {
-    return (await db()).getAll('providerSettings');
+    const database = await db();
+    try {
+      return database.getAll('providerSettings');
+    } finally {
+      database.close();
+    }
   },
   async saveProviderSettings(providerSettings: ProviderSettingsRecord) {
-    await (await db()).put('providerSettings', providerSettings);
+    const database = await db();
+    try {
+      await database.put('providerSettings', providerSettings);
+    } finally {
+      database.close();
+    }
   },
   async listUploadedFileAttachments() {
-    return (await db()).getAll('uploadedFileAttachments');
+    const database = await db();
+    try {
+      return database.getAll('uploadedFileAttachments');
+    } finally {
+      database.close();
+    }
   },
   async saveUploadedFileAttachment(attachment: UploadedFileAttachmentRecord) {
-    await (await db()).put('uploadedFileAttachments', attachment);
+    const database = await db();
+    try {
+      await database.put('uploadedFileAttachments', attachment);
+    } finally {
+      database.close();
+    }
   },
   async getPreference() {
-    return (await db()).get('preferences', 'default');
+    const database = await db();
+    try {
+      return database.get('preferences', 'default');
+    } finally {
+      database.close();
+    }
   },
   async savePreference(preference: AppPreference) {
-    await (await db()).put('preferences', preference);
+    const database = await db();
+    try {
+      await database.put('preferences', preference);
+    } finally {
+      database.close();
+    }
   }
 };

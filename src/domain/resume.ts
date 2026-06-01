@@ -1,4 +1,6 @@
-import type { ResumeContent, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from './types';
+import { defaultLayoutForTemplate } from './templateAdapters';
+import type { LayoutModule, ResumeContent, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from './types';
+import { createId } from './ids';
 
 const sectionOrder: SectionKey[] = ['summary', 'experience', 'education', 'projects', 'skills', 'awards', 'customSections'];
 
@@ -7,27 +9,11 @@ const now = () => {
   lastTimestamp = Math.max(Date.now(), lastTimestamp + 1);
   return new Date(lastTimestamp).toISOString();
 };
-const uuid = () => {
-  const cryptoApi = globalThis.crypto;
-  if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
-
-  const bytes = new Uint8Array(16);
-  if (typeof cryptoApi?.getRandomValues === 'function') {
-    cryptoApi.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0'));
-  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
-};
-const id = (prefix: string) => `${prefix}-${uuid()}`;
+const id = createId;
 
 export const defaultTemplateSettings = (templateId: TemplateId): TemplateSettings => ({
-  color: templateId === 'classic-ats' ? '#143d3a' : '#3949ab',
-  typography: templateId === 'classic-ats' ? 'Literata' : 'Aptos',
+  color: templateId === 'classic-ats' ? '#143d3a' : templateId === 'awesome-cv' ? '#d13624' : '#3949ab',
+  typography: templateId === 'classic-ats' ? 'Literata' : templateId === 'awesome-cv' ? 'Source Sans Pro' : 'Aptos',
   spacing: 'comfortable',
   pagePadding: 42
 });
@@ -51,7 +37,7 @@ export const emptyContent = (): ResumeContent => ({
 });
 
 export const sampleResume = (): ResumeRecord => {
-  const resume = createResume('Ada Lovelace - Sample Resume', 'classic-ats');
+  const resume = createResume('Ada Lovelace - Sample Resume', 'awesome-cv');
   resume.content.profile = {
     fullName: 'Ada Lovelace',
     headline: 'Computing pioneer and analytical engine collaborator',
@@ -94,13 +80,14 @@ export const sampleResume = (): ResumeRecord => {
 
 export const createResume = (title: string, templateId: TemplateId): ResumeRecord => {
   const timestamp = now();
-  return {
+  const resume: ResumeRecord = {
     id: id('resume'),
     schemaVersion: 1,
     title,
     activeTemplateId: templateId,
     sectionOrder,
     hiddenSections: [],
+    templateLayouts: {},
     content: emptyContent(),
     templateSettings: {
       [templateId]: defaultTemplateSettings(templateId)
@@ -111,6 +98,7 @@ export const createResume = (title: string, templateId: TemplateId): ResumeRecor
     updatedAt: timestamp,
     version: 1
   };
+  return ensureTemplateLayouts(resume);
 };
 
 export const touchResume = (resume: ResumeRecord): ResumeRecord => ({
@@ -122,7 +110,7 @@ export const touchResume = (resume: ResumeRecord): ResumeRecord => ({
 export const duplicateResume = (resume: ResumeRecord): ResumeRecord => {
   const timestamp = now();
   return {
-    ...structuredClone(resume),
+    ...structuredClone(ensureTemplateLayouts(resume)),
     id: id('resume'),
     title: `${resume.title} copy`,
     createdAt: timestamp,
@@ -134,10 +122,19 @@ export const duplicateResume = (resume: ResumeRecord): ResumeRecord => {
 export const renameResume = (resume: ResumeRecord, title: string): ResumeRecord => touchResume({ ...resume, title });
 
 export const switchTemplate = (resume: ResumeRecord, templateId: TemplateId): ResumeRecord => {
-  const next = structuredClone(resume);
+  const next = structuredClone(ensureTemplateLayouts(resume));
   next.activeTemplateId = templateId;
   next.templateSettings[templateId] ??= defaultTemplateSettings(templateId);
-  return touchResume(next);
+  return touchResume(ensureTemplateLayouts(next));
+};
+
+export const ensureTemplateLayouts = (resume: ResumeRecord): ResumeRecord => {
+  const next = structuredClone(resume) as ResumeRecord & { templateLayouts?: Record<string, LayoutModule[]> };
+  next.templateLayouts ??= {};
+  next.templateSettings ??= {};
+  next.templateSettings[next.activeTemplateId] ??= defaultTemplateSettings(next.activeTemplateId);
+  next.templateLayouts[next.activeTemplateId] ??= defaultLayoutForTemplate(next.activeTemplateId, next);
+  return next as ResumeRecord;
 };
 
 export const clearReviewMarkersForField = (resume: ResumeRecord, field: string): ResumeRecord => {

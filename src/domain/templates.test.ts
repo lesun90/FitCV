@@ -3,9 +3,10 @@ import { analyzeTemplateCompatibility, templates, validateTemplateRegistry } fro
 import { createResume } from './resume';
 
 describe('template registry', () => {
-  it('ships at least two curated templates', () => {
-    expect(templates).toHaveLength(2);
-    expect(new Set(templates.map((template) => template.id)).size).toBe(2);
+  it('ships curated templates including the first adapter-backed LaTeX layout', () => {
+    expect(templates).toHaveLength(3);
+    expect(new Set(templates.map((template) => template.id)).size).toBe(3);
+    expect(templates.map((template) => template.id)).toContain('awesome-cv');
   });
 
   it('preserves unsupported fields when switching templates', () => {

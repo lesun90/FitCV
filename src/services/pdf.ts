@@ -5,17 +5,25 @@ import { renderLatexSource } from '../domain/latex';
 import { runAtsChecks } from '../domain/checks';
 import type { CompileArtifact, ResumeRecord, SectionKey } from '../domain/types';
 import { getTemplate } from '../domain/templates';
+import { getTemplateAdapter, renderAdapterLatexProject } from '../domain/templateAdapters';
+import { createId } from '../domain/ids';
+import { compileLatexProject as defaultCompileLatexProject, type LatexCompileResult } from './latexCompiler';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
-export const compileResumeToPdf = async (resume: ResumeRecord): Promise<CompileArtifact> => {
+export const compileResumeToPdf = async (
+  resume: ResumeRecord,
+  deps: { compileLatexProject?: typeof defaultCompileLatexProject } = {}
+): Promise<CompileArtifact> => {
   const timestamp = new Date().toISOString();
-  const latexSource = renderLatexSource(resume);
+  const adapter = getTemplateAdapter(resume.activeTemplateId);
+  const latexProject = adapter?.renderLatexProject ? await renderAdapterLatexProject(resume) : undefined;
+  const latexSource = latexProject?.latexSource ?? renderLatexSource(resume);
   const checks = runAtsChecks(resume);
   const blocked = checks.filter((check) => check.status === 'blocked');
   if (blocked.length > 0) {
     return {
-      id: `artifact-${crypto.randomUUID()}`,
+      id: createId('artifact'),
       schemaVersion: 1,
       resumeId: resume.id,
       templateId: resume.activeTemplateId,
@@ -23,6 +31,36 @@ export const compileResumeToPdf = async (resume: ResumeRecord): Promise<CompileA
       status: 'failed',
       logs: blocked.map((check) => `${check.field}: ${check.message}`),
       latexSource,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  }
+
+  if (latexProject) {
+    const template = getTemplate(resume.activeTemplateId);
+    const compileLatexProject = deps.compileLatexProject ?? defaultCompileLatexProject;
+    const result: LatexCompileResult = await compileLatexProject({
+      files: latexProject.files,
+      mainFile: latexProject.mainFile,
+      engine: latexProject.engine
+    });
+
+    return {
+      id: createId('artifact'),
+      schemaVersion: 1,
+      resumeId: resume.id,
+      templateId: resume.activeTemplateId,
+      resumeVersion: resume.version,
+      status: result.status === 'success' ? 'clean' : 'failed',
+      logs: [
+        `Rendered adapter-backed LaTeX project for ${template.name}.`,
+        ...latexProject.warnings,
+        ...result.logs,
+        ...result.diagnostics
+      ],
+      latexSource,
+      pdfBlob: result.pdfBlob,
+      generatedText: flattenResumeText(resume),
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -52,7 +90,7 @@ export const compileResumeToPdf = async (resume: ResumeRecord): Promise<CompileA
   const bytes = await pdf.save();
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   return {
-    id: `artifact-${crypto.randomUUID()}`,
+    id: createId('artifact'),
     schemaVersion: 1,
     resumeId: resume.id,
     templateId: resume.activeTemplateId,

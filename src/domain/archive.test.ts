@@ -22,4 +22,20 @@ describe('.fitcv archive', () => {
     expect(imported.scoringReports).toEqual([]);
     expect(JSON.stringify(imported)).not.toMatch(/apiKey|secret/i);
   });
+
+  it('normalizes imported older resumes that do not have template layouts', async () => {
+    const resume = createResume('Older Resume', 'awesome-cv');
+    delete (resume as Partial<typeof resume>).templateLayouts;
+    const file = await exportFitcvArchive({
+      resumes: [resume],
+      artifacts: [],
+      fittedCvs: [],
+      jobDescriptions: [],
+      scoringReports: []
+    });
+
+    const imported = await importFitcvArchive(file);
+
+    expect(imported.resumes[0].templateLayouts['awesome-cv']).toBeDefined();
+  });
 });

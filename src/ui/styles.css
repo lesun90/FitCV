@@ -1493,6 +1493,34 @@ p {
   width: 14px;
 }
 
+.top-layout-select {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+.top-layout-select span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.top-layout-select select {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+  min-width: 132px;
+  outline: 0;
+}
+
 .backup-state {
   align-items: center;
   color: var(--amber);

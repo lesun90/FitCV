@@ -37,9 +37,11 @@ import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
 import { runAtsChecks } from '../domain/checks';
 import { clearReviewMarkersForField, createResume, duplicateResume, renameResume, sampleResume, switchTemplate, touchResume } from '../domain/resume';
 import { analyzeTemplateCompatibility, templates } from '../domain/templates';
-import type { CompileArtifact, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from '../domain/types';
+import type { CompileArtifact, LayoutModule, ResumeRecord, SectionKey, TemplateId, TemplateSettings } from '../domain/types';
+import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
+import { hasTemplateAdapter } from '../domain/templateAdapters';
 
 const sectionLabels: Record<SectionKey, string> = {
   summary: 'Summary',
@@ -49,6 +51,29 @@ const sectionLabels: Record<SectionKey, string> = {
   skills: 'Skills',
   awards: 'Awards',
   customSections: 'Custom sections'
+};
+
+const visibleLayoutTemplates = templates.filter((template) => template.id === 'awesome-cv');
+
+const labelForLayoutModule = (module: LayoutModule) => {
+  if (module.kind === 'space') return 'Space';
+  if (module.kind === 'new-page') return 'New page';
+  return sectionLabels[module.section];
+};
+
+const updateLayoutModule = (
+  resume: ResumeRecord,
+  moduleId: string,
+  recipe: (module: LayoutModule) => LayoutModule
+): ResumeRecord => {
+  const layout = resume.templateLayouts[resume.activeTemplateId] ?? [];
+  return touchResume({
+    ...resume,
+    templateLayouts: {
+      ...resume.templateLayouts,
+      [resume.activeTemplateId]: layout.map((module) => (module.id === moduleId ? recipe(module) : module))
+    }
+  });
 };
 
 type ViewMode = 'dashboard' | 'editor';
@@ -119,17 +144,22 @@ export const App = () => {
 
   const compile = async () => {
     if (!active) return;
-    setBusy('Compiling in browser');
-    setError('');
-    const { compileResumeToPdf } = await import('../services/pdf');
-    const result = await compileResumeToPdf(active);
-    await storage.saveArtifact(result);
-    setArtifact(result);
-    setBusy('');
+    try {
+      setBusy('Compiling in browser');
+      setError('');
+      const { compileResumeToPdf } = await import('../services/pdf');
+      const result = await compileResumeToPdf(active);
+      await storage.saveArtifact(result);
+      setArtifact(result);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'PDF compile failed.');
+    } finally {
+      setBusy('');
+    }
   };
 
   const createBlank = () => {
-    void save(createResume('Untitled Resume', 'classic-ats'));
+    void save(createResume('Untitled Resume', 'awesome-cv'));
     setMode('editor');
   };
 
@@ -368,6 +398,16 @@ const EditorWorkspace = ({
   onExportArchive: () => void;
 }) => {
   const [selectedSection, setSelectedSection] = useState<SectionKey>('experience');
+  const [selectedModuleId, setSelectedModuleId] = useState<string>();
+  const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
+  const selectedModule = activeLayout.find((module) => module.id === selectedModuleId) ?? activeLayout.find((module) => module.kind === 'section' && module.section === selectedSection) ?? activeLayout[0];
+  const editorSection = selectedModule?.kind === 'section' ? selectedModule.section : selectedSection;
+
+  useEffect(() => {
+    if (!visibleLayoutTemplates.some((template) => template.id === active.activeTemplateId)) {
+      onChange((resume) => switchTemplate(resume, 'awesome-cv'));
+    }
+  }, [active.activeTemplateId]);
 
   return (
     <main className="editor-shell">
@@ -381,6 +421,18 @@ const EditorWorkspace = ({
           <input value={active.title} onChange={(event) => onChange((resume) => renameResume(resume, event.target.value))} aria-label="Resume title" />
           <Pencil aria-hidden="true" />
         </div>
+        <label className="top-layout-select">
+          <span>Layout</span>
+          <select
+            aria-label="Layout"
+            value={visibleLayoutTemplates.some((template) => template.id === active.activeTemplateId) ? active.activeTemplateId : 'awesome-cv'}
+            onChange={(event) => onChange((resume) => switchTemplate(resume, event.target.value as TemplateId))}
+          >
+            {visibleLayoutTemplates.map((template) => (
+              <option key={template.id} value={template.id}>{template.name}</option>
+            ))}
+          </select>
+        </label>
         <span className={cleanCompile ? 'backup-state clean' : 'backup-state'}>
           {cleanCompile ? <CheckCircle2 /> : <Clock3 />}
           {cleanCompile ? 'PDF ready' : 'Not backed up'}
@@ -399,14 +451,23 @@ const EditorWorkspace = ({
           active={active}
           onChange={onChange}
           unsupported={unsupported}
-          selectedSection={selectedSection}
-          onSelectSection={setSelectedSection}
+          selectedModule={selectedModule}
+          selectedSection={editorSection}
+          onSelectModule={(module) => {
+            setSelectedModuleId(module.id);
+            if (module.kind === 'section') setSelectedSection(module.section);
+          }}
+          onSelectSection={(section) => {
+            setSelectedSection(section);
+            setSelectedModuleId(undefined);
+          }}
         />
         <EditorPanel
           active={active}
           onChange={onChange}
           reviewCount={reviewCount}
-          selectedSection={selectedSection}
+          selectedModule={selectedModule}
+          selectedSection={editorSection}
         />
         <PreviewPanel
           active={active}
@@ -416,7 +477,7 @@ const EditorWorkspace = ({
           checks={checks}
           cleanCompile={cleanCompile}
           pdfUrl={pdfUrl}
-          selectedSection={selectedSection}
+          selectedSection={editorSection}
           warningCount={warningCount}
           onBack={onBack}
           onCompile={onCompile}
@@ -525,16 +586,22 @@ const StylePanel = ({
   active,
   onChange,
   unsupported,
+  selectedModule,
   selectedSection,
+  onSelectModule,
   onSelectSection
 }: {
   active: ResumeRecord;
   onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
   unsupported: SectionKey[];
+  selectedModule?: LayoutModule;
   selectedSection: SectionKey;
+  onSelectModule: (module: LayoutModule) => void;
   onSelectSection: (section: SectionKey) => void;
 }) => {
   const settings = getSettings(active);
+  const usesLayoutModules = hasTemplateAdapter(active.activeTemplateId);
+  const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
   const { size: baseSize, lineHeight } = parseTypo(settings.typography);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
@@ -556,6 +623,18 @@ const StylePanel = ({
     });
   };
 
+  const reorderModule = (fromId: string, toId: string) => {
+    onChange((resume) => {
+      const layout = [...(resume.templateLayouts[resume.activeTemplateId] ?? [])];
+      const fi = layout.findIndex((module) => module.id === fromId);
+      const ti = layout.findIndex((module) => module.id === toId);
+      if (fi === -1 || ti === -1) return resume;
+      const [moved] = layout.splice(fi, 1);
+      layout.splice(ti, 0, moved);
+      return touchResume({ ...resume, templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: layout } });
+    });
+  };
+
   const handleGripPointerDown = (e: React.PointerEvent, index: number) => {
     e.preventDefault();
     if (!listRef.current) return;
@@ -572,7 +651,7 @@ const StylePanel = ({
   const handleListPointerMove = (e: React.PointerEvent) => {
     if (dragIndex === null) return;
     setPointerY(e.clientY);
-    const n = active.sectionOrder.length;
+    const n = usesLayoutModules ? activeLayout.length : active.sectionOrder.length;
     let newOver = n - 1;
     for (let i = 0; i < n; i++) {
       if (rowTops.current[i] + rowHeights.current[i] / 2 > e.clientY) {
@@ -585,7 +664,11 @@ const StylePanel = ({
 
   const handleListPointerUp = () => {
     if (dragIndex !== null && overIndex !== null && dragIndex !== overIndex) {
-      reorder(active.sectionOrder[dragIndex], active.sectionOrder[overIndex]);
+      if (usesLayoutModules) {
+        reorderModule(activeLayout[dragIndex].id, activeLayout[overIndex].id);
+      } else {
+        reorder(active.sectionOrder[dragIndex], active.sectionOrder[overIndex]);
+      }
     }
     setDragIndex(null);
     setOverIndex(null);
@@ -625,7 +708,39 @@ const StylePanel = ({
           onPointerUp={handleListPointerUp}
           onPointerCancel={handleListPointerUp}
         >
-          {active.sectionOrder.map((section, index) => {
+          {usesLayoutModules ? activeLayout.map((module, index) => {
+            const label = labelForLayoutModule(module);
+            const isHidden = !module.enabled;
+            return (
+              <div
+                key={module.id}
+                style={getItemStyle(index)}
+                className={[
+                  'module-row',
+                  module.id === selectedModule?.id ? 'selected' : '',
+                  isHidden ? 'hidden' : '',
+                  dragIndex === index ? 'dragging' : '',
+                ].filter(Boolean).join(' ')}
+              >
+                <GripVertical
+                  aria-hidden="true"
+                  onPointerDown={(e) => handleGripPointerDown(e, index)}
+                />
+                <button className="module-select-btn" onClick={() => onSelectModule(module)}>
+                  {label}
+                </button>
+                <button
+                  className="visibility-toggle"
+                  onClick={() =>
+                    onChange((resume) => updateLayoutModule(resume, module.id, (item) => ({ ...item, enabled: !item.enabled })))
+                  }
+                  aria-label={`${module.enabled ? 'Disable' : 'Enable'} ${label}`}
+                >
+                  {module.enabled ? <Eye /> : <EyeOff />}
+                </button>
+              </div>
+            );
+          }) : active.sectionOrder.map((section, index) => {
             const isHidden = active.hiddenSections.includes(section);
             return (
               <div
@@ -662,22 +777,6 @@ const StylePanel = ({
             );
           })}
           <button className="add-module"><Plus />Add Module</button>
-        </div>
-      </div>
-
-      <div className="design-card">
-        <div className="panel-title">Template</div>
-        <div className="template-switcher">
-          {templates.map((template) => (
-            <button
-              key={template.id}
-              className={active.activeTemplateId === template.id ? 'selected' : ''}
-              onClick={() => onChange((resume) => switchTemplate(resume, template.id as TemplateId))}
-            >
-              <strong>{template.name}</strong>
-              <span>{template.description}</span>
-            </button>
-          ))}
         </div>
       </div>
 
@@ -779,17 +878,21 @@ const EditorPanel = ({
   active,
   onChange,
   reviewCount,
+  selectedModule,
   selectedSection
 }: {
   active: ResumeRecord;
   onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
   reviewCount: number;
+  selectedModule?: LayoutModule;
   selectedSection: SectionKey;
 }) => (
   <section className="panel editor" aria-label="Section editor">
-    <div className="editor-subhead">{sectionLabels[selectedSection]}</div>
-    <div className="section-editor" key={selectedSection}>
-      {renderSectionEditor(selectedSection, active, onChange)}
+    <div className="editor-subhead">{selectedModule ? labelForLayoutModule(selectedModule) : sectionLabels[selectedSection]}</div>
+    <div className="section-editor" key={selectedModule?.id ?? selectedSection}>
+      {selectedModule && selectedModule.kind !== 'section'
+        ? renderLayoutControlEditor(selectedModule, active, onChange)
+        : renderSectionEditor(selectedSection, active, onChange)}
     </div>
     {reviewCount > 0 && (
       <div className="review-box">
@@ -801,6 +904,57 @@ const EditorPanel = ({
     )}
   </section>
 );
+
+const renderLayoutControlEditor = (
+  module: Exclude<LayoutModule, { kind: 'section' }>,
+  active: ResumeRecord,
+  onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void
+) => {
+  if (module.kind === 'space') {
+    return (
+      <div className="section-card">
+        <div className="subhead">
+          <h3>Space</h3>
+          <span className="template-chip">{module.enabled ? 'Enabled' : 'Disabled'}</span>
+        </div>
+        <div className="segmented">
+          {(['small', 'medium', 'large'] as const).map((size) => (
+            <button
+              key={size}
+              className={module.size === size ? 'selected' : ''}
+              onClick={() => onChange((resume) => updateLayoutModule(resume, module.id, (item) => item.kind === 'space' ? { ...item, size } : item))}
+            >
+              {size[0].toUpperCase() + size.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="section-card">
+      <div className="subhead">
+        <h3>New page</h3>
+        <span className="template-chip">{module.enabled ? 'Enabled' : 'Disabled'}</span>
+      </div>
+      <div className="segmented">
+        <button
+          className={module.enabled ? 'selected' : ''}
+          onClick={() => onChange((resume) => updateLayoutModule(resume, module.id, (item) => ({ ...item, enabled: true })))}
+        >
+          On
+        </button>
+        <button
+          className={!module.enabled ? 'selected' : ''}
+          onClick={() => onChange((resume) => updateLayoutModule(resume, module.id, (item) => ({ ...item, enabled: false })))}
+        >
+          Off
+        </button>
+      </div>
+    </div>
+  );
+};
 
 const renderSectionEditor = (
   section: SectionKey,
@@ -849,7 +1003,7 @@ const ExperienceEditor = ({ active, onChange }: SectionEditorProps) => (
   <div className="section-card items">
     <div className="subhead">
       <h3>Experience</h3>
-      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, experience: [...r.content.experience, { id: crypto.randomUUID(), company: '', role: '', location: '', startDate: '', endDate: '', highlights: [''] }] } }))}><Plus />Add</button>
+      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, experience: [...r.content.experience, { id: createId('exp'), company: '', role: '', location: '', startDate: '', endDate: '', highlights: [''] }] } }))}><Plus />Add</button>
     </div>
     {active.content.experience.map((item, index) => (
       <article className="item-card" key={item.id}>
@@ -883,7 +1037,7 @@ const EducationEditor = ({ active, onChange }: SectionEditorProps) => (
   <div className="section-card items">
     <div className="subhead">
       <h3>Education</h3>
-      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, education: [...r.content.education, { id: crypto.randomUUID(), school: '', degree: '', location: '', startDate: '', endDate: '', highlights: [''] }] } }))}><Plus />Add</button>
+      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, education: [...r.content.education, { id: createId('edu'), school: '', degree: '', location: '', startDate: '', endDate: '', highlights: [''] }] } }))}><Plus />Add</button>
     </div>
     {active.content.education.map((item, index) => (
       <article className="item-card" key={item.id}>
@@ -917,7 +1071,7 @@ const ProjectsEditor = ({ active, onChange }: SectionEditorProps) => (
   <div className="section-card items">
     <div className="subhead">
       <h3>Projects</h3>
-      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, projects: [...r.content.projects, { id: crypto.randomUUID(), name: '', description: '', highlights: [''], links: [] }] } }))}><Plus />Add</button>
+      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, projects: [...r.content.projects, { id: createId('project'), name: '', description: '', highlights: [''], links: [] }] } }))}><Plus />Add</button>
     </div>
     {active.content.projects.map((item, index) => (
       <article className="item-card" key={item.id}>
@@ -976,7 +1130,7 @@ const CustomSectionsEditor = ({ active, onChange }: SectionEditorProps) => (
   <div className="section-card items">
     <div className="subhead">
       <h3>Custom sections</h3>
-      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, customSections: [...r.content.customSections, { id: crypto.randomUUID(), title: '', body: '' }] } }))}><Plus />Add</button>
+      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, customSections: [...r.content.customSections, { id: createId('custom'), title: '', body: '' }] } }))}><Plus />Add</button>
     </div>
     {active.content.customSections.map((item, index) => (
       <article className="item-card" key={item.id}>
@@ -1043,7 +1197,7 @@ const PreviewPanel = ({
 }) => (
   <aside className="preview-pane" aria-label="Browser PDF preview">
     <div className="preview-toolbar" role="toolbar" aria-label="Preview actions">
-      <button aria-label="Template" title="Template"><Layers /></button>
+      <button aria-label="Layout" title="Layout"><Layers /></button>
       <button aria-label="Grammar check" title="Grammar check"><Sparkles /></button>
       <button aria-label="Download PDF" title="Download PDF" disabled={!artifact?.pdfBlob || artifact.status !== 'clean'} onClick={onDownloadPdf}><Download /></button>
       <button aria-label="Duplicate resume" title="Duplicate resume" onClick={onDuplicate}><Copy /></button>
@@ -1060,7 +1214,7 @@ const PreviewPanel = ({
     </div>
     <ResumePaper active={active} selectedSection={selectedSection} onSelectSection={onSelectSection} />
     <div className="preview-status">
-      <StatusPill icon={<FileCheck2 />} label="Template" value={activeTemplateName} />
+      <StatusPill icon={<FileCheck2 />} label="Layout" value={activeTemplateName} />
       <StatusPill icon={<ShieldCheck />} label="ATS" value={warningCount ? `${warningCount} warnings` : 'Clear'} tone={warningCount ? 'warn' : 'good'} />
       <StatusPill icon={cleanCompile ? <CheckCircle2 /> : <Clock3 />} label="PDF" value={cleanCompile ? 'Clean' : artifact?.status ?? 'Stale'} tone={cleanCompile ? 'good' : 'warn'} />
     </div>

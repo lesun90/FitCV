@@ -1,4 +1,5 @@
 import type { CompileArtifact, FittedCvRecord, JobDescriptionRecord, ResumeRecord, ScoringReportRecord } from './types';
+import { ensureTemplateLayouts } from './resume';
 
 export interface FitcvArchive {
   schemaVersion: 1;
@@ -41,6 +42,7 @@ export const importFitcvArchive = async (file: Blob): Promise<FitcvArchive> => {
   if (archive.schemaVersion !== 1 || !Array.isArray(archive.resumes)) {
     throw new Error('Unsupported .fitcv archive.');
   }
+  archive.resumes = archive.resumes.map(ensureTemplateLayouts);
   archive.fittedCvs ??= [];
   archive.jobDescriptions ??= [];
   archive.scoringReports ??= [];
