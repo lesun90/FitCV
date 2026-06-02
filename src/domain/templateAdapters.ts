@@ -1,5 +1,5 @@
 import type { LatexProjectFile } from './latexProject';
-import { escapeLatex, visibleProfileHighlights } from './latex';
+import { escapeLatex, escapeLatexRichText, visibleProfileHighlights } from './latex';
 import type { LayoutModule, ProfileFieldKey, ResumeRecord, SectionKey, TemplateKey } from './types';
 import { createId } from './ids';
 
@@ -186,7 +186,7 @@ const renderAwesomeSection = (resume: ResumeRecord, module: Extract<LayoutModule
   if (module.section === 'summary' && profileHighlights.length) {
     return [
       '\\begin{highlights}',
-      ...profileHighlights.map((line) => `  \\item[\\textbullet]{${escapeLatex(line)}}`),
+      ...profileHighlights.map((line) => `  \\item[\\textbullet]{${escapeLatexRichText(line)}}`),
       '\\end{highlights}'
     ].join('\n');
   }
@@ -272,7 +272,7 @@ const renderAwesomeSection = (resume: ResumeRecord, module: Extract<LayoutModule
     return customSections.map((item) => [
       `\\cvsection{${awesomeSectionTitle(titleOverride, item.title)}}`,
       '\\begin{cvitems}',
-      ...item.body.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => `  \\item {${escapeLatex(line)}}`),
+      ...item.body.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => `  \\item {${escapeLatexRichText(line)}}`),
       '\\end{cvitems}'
     ].join('\n')).join('\n\n');
   }
@@ -300,7 +300,7 @@ const renderCvItems = (items: string[], indent: string) => {
   return [
     `${indent}{`,
     `${indent}  \\begin{cvitems}`,
-    ...lines.map((item) => `${indent}    \\item {${escapeLatex(item)}}`),
+    ...lines.map((item) => `${indent}    \\item {${escapeLatexRichText(item)}}`),
     `${indent}  \\end{cvitems}`,
     `${indent}}`
   ].join('\n');

@@ -496,6 +496,29 @@ p {
   margin-left: auto;
 }
 
+.latex-code-editor-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.latex-code-editor-wrap .latex-code-frame {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.latex-code-editor-wrap .rich-toolbar {
+  border-bottom: 1px solid var(--line);
+  border-left: none;
+  border-radius: 0;
+  border-right: none;
+  border-top: none;
+  flex-shrink: 0;
+}
+
 .latex-code-frame {
   background: #fffdf9;
   min-height: 100%;
@@ -2729,4 +2752,182 @@ pre {
   backdrop-filter: blur(2px);
   color: var(--fg-muted, #62686d);
   font-size: 0.85rem;
+}
+
+/* ─── Dashboard thumbnail ──────────────────────────────────── */
+
+.mini-preview-thumb {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  object-position: top center;
+  width: 100%;
+}
+
+/* ─── Rich text toolbar ────────────────────────────────────── */
+
+.rich-wrap {
+  display: grid;
+}
+
+.rich-wrap textarea {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+.rich-text-frame {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 0 0 7px 7px;
+  border-top: none;
+  overflow: hidden;
+  position: relative;
+}
+
+.rich-text-highlight {
+  background: transparent;
+  border-radius: 0;
+  color: var(--ink);
+  font: inherit;
+  font-size: inherit;
+  left: 0;
+  line-height: 1.5;
+  margin: 0;
+  max-height: none;
+  overflow: visible;
+  padding: 10px 12px;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rich-text-frame textarea {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  caret-color: var(--ink);
+  color: transparent;
+  position: relative;
+  z-index: 1;
+}
+
+.rich-text-frame textarea::placeholder {
+  color: var(--muted);
+}
+
+.rich-text-frame textarea::selection {
+  background: rgba(47, 107, 183, 0.24);
+  color: transparent;
+}
+
+.rich-preview-bold {
+  font-weight: 750;
+}
+
+.rich-preview-italic {
+  font-style: italic;
+}
+
+.rich-preview-underline {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.rich-toolbar {
+  align-items: center;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-bottom: none;
+  border-radius: 7px 7px 0 0;
+  display: flex;
+  gap: 2px;
+  padding: 4px 7px;
+}
+
+.rich-btn {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  min-height: 26px;
+  padding: 2px 7px;
+  width: auto;
+}
+
+.rich-btn:hover {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
+  transform: none;
+}
+
+.rich-italic em {
+  font-style: italic;
+}
+
+.rich-sep {
+  background: var(--line);
+  flex-shrink: 0;
+  height: 16px;
+  margin: 0 5px;
+  width: 1px;
+}
+
+.rich-color-swatch {
+  border: 1.5px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(27, 27, 24, 0.14);
+  flex-shrink: 0;
+  height: 17px;
+  min-height: 0;
+  padding: 0;
+  width: 17px;
+}
+
+.rich-color-swatch:hover {
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 2px rgba(27, 27, 24, 0.28);
+  transform: scale(1.15);
+}
+
+/* ─── Profile highlight compact rows ──────────────────────── */
+
+.highlight-row {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 24px minmax(0, 1fr) 44px 44px;
+  padding: 8px 0;
+}
+
+.highlight-row + .highlight-row {
+  border-top: 1px solid var(--line);
+}
+
+.highlight-num {
+  color: var(--faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  padding-top: 30px;
+  text-align: center;
+}
+
+.highlight-row .rich-wrap textarea {
+  min-height: 62px;
+}
+
+.highlight-row .ghost-button {
+  min-height: 44px;
+  padding: 0;
+  width: 44px;
+}
+
+.highlight-row.item-hidden {
+  opacity: 0.55;
 }

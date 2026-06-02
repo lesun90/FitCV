@@ -16,6 +16,10 @@ const replacements: Record<string, string> = {
 
 export const escapeLatex = (value: string) => value.replace(/[\\&%$#_{}~^]/g, (match) => replacements[match]);
 
+// For rich-text fields: leaves \ { } intact so LaTeX commands pass through,
+// but still escapes & % $ # _ ~ ^ which appear in everyday text.
+export const escapeLatexRichText = (value: string) => value.replace(/[&%$#_~^]/g, (match) => replacements[match]);
+
 export const renderLatexSource = (resume: ResumeRecord): string => {
   const template = getTemplate(resume.activeTemplateId);
   const profile = resume.content.profile;
@@ -49,13 +53,13 @@ const renderSection = (resume: ResumeRecord, section: SectionKey) => {
   if (section === 'summary') {
     const highlights = visibleProfileHighlights(resume);
     if (!highlights.length) return '';
-    return namedSection('Profile Highlight', highlights.map((line) => `\\item ${escapeLatex(line)}`).join('\n'));
+    return namedSection('Profile Highlight', highlights.map((line) => `\\item ${escapeLatexRichText(line)}`).join('\n'));
   }
   if (section === 'experience' && content.experience.length) {
     return namedSection(
       'Experience',
       content.experience
-        .map((item) => `\\textbf{${escapeLatex(item.role)}} -- ${escapeLatex(item.company)}\\\\\n${item.highlights.map((line) => `\\item ${escapeLatex(line)}`).join('\n')}`)
+        .map((item) => `\\textbf{${escapeLatex(item.role)}} -- ${escapeLatex(item.company)}\\\\\n${item.highlights.map((line) => `\\item ${escapeLatexRichText(line)}`).join('\n')}`)
         .join('\n')
     );
   }
@@ -63,7 +67,7 @@ const renderSection = (resume: ResumeRecord, section: SectionKey) => {
     return namedSection('Education', content.education.map((item) => `\\textbf{${escapeLatex(item.degree)}} -- ${escapeLatex(item.school)}`).join('\\\\\n'));
   }
   if (section === 'projects' && content.projects.length) {
-    return namedSection('Projects', content.projects.map((item) => `\\textbf{${escapeLatex(item.name)}} -- ${escapeLatex(item.description)}`).join('\\\\\n'));
+    return namedSection('Projects', content.projects.map((item) => `\\textbf{${escapeLatex(item.name)}} -- ${escapeLatexRichText(item.description)}`).join('\\\\\n'));
   }
   if (section === 'skills' && content.skills.length) {
     return namedSection('Skills', escapeLatex(content.skills.join(', ')));
@@ -72,7 +76,7 @@ const renderSection = (resume: ResumeRecord, section: SectionKey) => {
     return namedSection('Awards', escapeLatex(content.awards.join('; ')));
   }
   if (section === 'customSections' && content.customSections.length) {
-    return content.customSections.map((item) => namedSection(item.title, escapeLatex(item.body))).join('\n');
+    return content.customSections.map((item) => namedSection(item.title, escapeLatexRichText(item.body))).join('\n');
   }
   return '';
 };

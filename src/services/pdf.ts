@@ -105,6 +105,25 @@ export const compileResumeToPdf = async (
   };
 };
 
+export const generateThumbnailDataUrl = async (pdfBlob: Blob): Promise<string | undefined> => {
+  if (typeof document === 'undefined') return undefined;
+  try {
+    const data = await pdfBlob.arrayBuffer();
+    const doc = await pdfjs.getDocument({ data }).promise;
+    const page = await doc.getPage(1);
+    const viewport = page.getViewport({ scale: 0.5 });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return undefined;
+    await page.render({ canvasContext: ctx as unknown as CanvasRenderingContext2D, viewport }).promise;
+    return canvas.toDataURL('image/jpeg', 0.75);
+  } catch {
+    return undefined;
+  }
+};
+
 export const extractPdfText = async (file: File) => {
   const data = await file.arrayBuffer();
   const pdf = await pdfjs.getDocument({ data }).promise;

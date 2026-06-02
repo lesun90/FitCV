@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { formatPdfPreviewUrl, highlightLatexSource } from './latexUtils';
+import { formatPdfPreviewUrl, highlightLatexSource, renderRichLatexText } from './latexUtils';
 
 vi.mock('../services/pdf', () => ({
   compileResumeToPdf: vi.fn(async () => ({
@@ -17,7 +17,8 @@ vi.mock('../services/pdf', () => ({
     generatedText: 'Ada Lovelace',
     createdAt: '2026-06-01T00:00:00.000Z',
     updatedAt: '2026-06-01T00:00:00.000Z'
-  }))
+  })),
+  generateThumbnailDataUrl: vi.fn(async () => undefined)
 }));
 
 describe('FitCV UI shell', () => {
@@ -38,7 +39,7 @@ describe('FitCV UI shell', () => {
     expect(screen.getByRole('list', { name: 'Library summaries' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'All resumes' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Open Editor/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/i }));
 
     expect(screen.getByRole('region', { name: 'Editor workbench' })).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: 'Browser PDF preview' })).toBeInTheDocument();
@@ -49,7 +50,7 @@ describe('FitCV UI shell', () => {
   it('shows Awesome CV as a FitCV layout with module controls in the editor', async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Open Editor/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
 
     expect(screen.getByRole('combobox', { name: 'Layout' })).toHaveValue('awesome-cv');
     expect(screen.getByRole('option', { name: 'Awesome CV' })).toBeInTheDocument();
@@ -77,7 +78,7 @@ describe('FitCV UI shell', () => {
   it('adds section modules from the active layout adapter', async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Open Editor/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
     const initialCustomModuleCount = screen.getAllByRole('button', { name: 'Custom sections' }).length;
 
     fireEvent.click(screen.getByRole('button', { name: 'Add Module' }));
@@ -93,7 +94,7 @@ describe('FitCV UI shell', () => {
   it('edits section module names from the layout list', async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Open Editor/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
     fireEvent.click(screen.getByRole('button', { name: 'Edit Experience' }));
     const sectionNameInput = screen.getByRole('textbox', { name: 'Section name for Experience' });
     fireEvent.change(sectionNameInput, {
@@ -108,7 +109,7 @@ describe('FitCV UI shell', () => {
   it('edits Summary as one-row profile fields and itemized profile highlights', async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Open Editor/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
     fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
 
     expect(screen.getByRole('textbox', { name: 'GitLab' })).toBeInTheDocument();
@@ -129,7 +130,7 @@ describe('FitCV UI shell', () => {
   it('shows when profile highlights will not compile because Summary is disabled', async () => {
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Open Editor/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
     fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
     fireEvent.click(screen.getByRole('button', { name: 'Disable Summary' }));
 
@@ -148,11 +149,47 @@ describe('FitCV UI shell', () => {
     vi.mocked(compileResumeToPdf).mockRejectedValueOnce(new Error('BusyTeX unavailable'));
     render(<App />);
 
-    fireEvent.click(await screen.findByRole('button', { name: /Open Editor/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
     fireEvent.click(screen.getAllByRole('button', { name: 'Compile' })[0]);
 
     expect(await screen.findByText('BusyTeX unavailable')).toBeInTheDocument();
     expect(screen.queryByText('Compiling in browser')).not.toBeInTheDocument();
+  });
+
+  it('manual compile uses the active resume instead of the click event', async () => {
+    const { compileResumeToPdf } = await import('../services/pdf');
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    const compileButton = screen.getAllByRole('button', { name: 'Compile' })[0];
+    await waitFor(() => expect(compileButton).not.toBeDisabled());
+    vi.mocked(compileResumeToPdf).mockClear();
+    fireEvent.click(compileButton);
+
+    await waitFor(() => expect(compileResumeToPdf).toHaveBeenCalled());
+    expect(vi.mocked(compileResumeToPdf).mock.calls.at(-1)?.[0]).toMatchObject({
+      activeTemplateId: 'awesome-cv',
+      content: expect.any(Object),
+      id: expect.any(String)
+    });
+  });
+
+  it('shows a real dashboard thumbnail after a clean compile generates one', async () => {
+    const { generateThumbnailDataUrl } = await import('../services/pdf');
+    vi.mocked(generateThumbnailDataUrl).mockResolvedValueOnce('data:image/jpeg;base64,fitcv-preview');
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Compile' })[0]);
+    await waitFor(() => expect(generateThumbnailDataUrl).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
+
+    const thumbnail = await waitFor(() => {
+      const element = document.querySelector('.mini-preview-thumb');
+      expect(element).toBeInstanceOf(HTMLImageElement);
+      return element as HTMLImageElement;
+    });
+    expect(thumbnail).toHaveAttribute('src', 'data:image/jpeg;base64,fitcv-preview');
   });
 
   it('shows the standalone LaTeX editor route without linking from the main dashboard', async () => {
@@ -174,5 +211,18 @@ describe('FitCV UI shell', () => {
     expect(container.querySelector('.latex-syntax-brace')?.textContent).toBe('{');
     expect(container.querySelector('.latex-syntax-comment')?.textContent).toBe('% note');
     expect(formatPdfPreviewUrl('blob:fitcv-pdf')).toBe('blob:fitcv-pdf#toolbar=0&navpanes=0&scrollbar=0&view=FitH');
+  });
+
+  it('renders rich text fields as formatted text instead of visible LaTeX commands', () => {
+    const { container } = render(
+      <pre>{renderRichLatexText('\\textbf{Bold} \\textit{Italic} \\underline{Under} \\textcolor{red}{Red}')}</pre>
+    );
+
+    expect(container.textContent).toBe('Bold Italic Under Red');
+    expect(container.querySelector('.rich-preview-bold')?.textContent).toBe('Bold');
+    expect(container.querySelector('.rich-preview-italic')?.textContent).toBe('Italic');
+    expect(container.querySelector('.rich-preview-underline')?.textContent).toBe('Under');
+    expect(container.querySelector('.rich-preview-color')?.textContent).toBe('Red');
+    expect(container.querySelector('.rich-preview-color')).toHaveStyle({ color: '#cc2222' });
   });
 });

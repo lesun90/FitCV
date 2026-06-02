@@ -14,10 +14,8 @@ import {
   FileArchive,
   FileCheck2,
   FilePlus2,
-  FolderOpen,
   GripVertical,
   Loader2,
-  MoreHorizontal,
   Pencil,
   Plus,
   RotateCw,
@@ -35,9 +33,10 @@ import type { CompileArtifact, LayoutModule, ProfileFieldKey, ProfileHighlightIt
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
-import { formatPdfPreviewUrl } from './latexUtils';
+import { formatPdfPreviewUrl, renderRichLatexText, LATEX_COLORS } from './latexUtils';
 import { downloadBlob, StatusPill } from './shared';
 import { clampSpaceValue, defaultSpaceValue, getTemplateAdapter, hasTemplateAdapter, MAX_SPACE_VALUE, MIN_SPACE_VALUE } from '../domain/templateAdapters';
+
 
 const sectionLabels: Record<SectionKey, string> = {
   summary: 'Summary',
@@ -140,6 +139,8 @@ export const App = () => {
   // Takes an optional resume override so we can compile the correct resume
   // immediately when switching sessions (before React state settles).
   const compile = async (resumeOverride?: ResumeRecord) => {
+    // Cancel any pending debounced auto-compile so only one compile runs at a time.
+    clearTimeout(debounceRef.current);
     const target = resumeOverride ?? activeRef.current;
     if (!target) return;
     const gen = ++compileGenRef.current;
@@ -151,12 +152,27 @@ export const App = () => {
       if (gen !== compileGenRef.current) return;
       await storage.saveArtifact(result);
       setArtifact(result);
+      if (result.status === 'clean' && result.pdfBlob) {
+        void saveThumbnail(target.id, result.pdfBlob);
+      }
     } catch (caught) {
       if (gen !== compileGenRef.current) return;
       setError(caught instanceof Error ? caught.message : 'PDF compile failed.');
     } finally {
       if (gen === compileGenRef.current) setBusy('');
     }
+  };
+
+  const saveThumbnail = async (resumeId: string, pdfBlob: Blob) => {
+    const { generateThumbnailDataUrl } = await import('../services/pdf');
+    const thumbnailDataUrl = await generateThumbnailDataUrl(pdfBlob);
+    if (!thumbnailDataUrl) return;
+    const current = activeRef.current?.id === resumeId ? activeRef.current : resumes.find((resume) => resume.id === resumeId);
+    if (!current) return;
+    const updated = { ...current, thumbnailDataUrl };
+    if (activeRef.current?.id === resumeId) activeRef.current = updated;
+    setResumes((items) => items.map((item) => (item.id === resumeId ? updated : item)));
+    await storage.saveResume(updated);
   };
 
   // Auto-compile for structural changes (layout, add/delete): fires immediately
@@ -189,13 +205,21 @@ export const App = () => {
     void compile(resume);
   };
 
-  const deleteActive = async () => {
-    if (!active || !window.confirm(`Delete "${active.title}"? This only removes browser-local data.`)) return;
-    await storage.deleteResume(active.id);
-    const remaining = resumes.filter((resume) => resume.id !== active.id);
+  const deleteResume = async (id: string) => {
+    const target = resumes.find((r) => r.id === id);
+    if (!target || !window.confirm(`Delete "${target.title}"? This only removes browser-local data.`)) return;
+    await storage.deleteResume(id);
+    const remaining = resumes.filter((r) => r.id !== id);
     setResumes(remaining);
-    setActiveId(remaining[0]?.id);
-    setMode('dashboard');
+    if (activeId === id) {
+      setActiveId(remaining[0]?.id);
+      if (mode === 'editor') setMode('dashboard');
+    }
+  };
+
+  const deleteActive = async () => {
+    if (!active) return;
+    await deleteResume(active.id);
   };
 
   const importArchive = async (file: File) => {
@@ -252,6 +276,7 @@ export const App = () => {
         onCreate={createBlank}
         onDuplicate={cloneActive}
         onOpen={openResume}
+        onDelete={deleteResume}
         onImportPdf={importPdf}
         onImportArchive={importArchive}
         onExportArchive={exportArchive}
@@ -273,7 +298,7 @@ export const App = () => {
       unsupported={compatibility?.unsupportedSections ?? []}
       onBack={() => setMode('dashboard')}
       onChange={updateActive}
-      onCompile={compile}
+      onCompile={() => void compile()}
       onDelete={deleteActive}
       onDownloadPdf={() => artifact?.pdfBlob && downloadBlob(artifact.pdfBlob, `${active.title}.pdf`)}
       onToggleAutoCompile={() => setAutoCompile((v) => !v)}
@@ -291,6 +316,7 @@ const Dashboard = ({
   onCreate,
   onDuplicate,
   onOpen,
+  onDelete,
   onImportPdf,
   onImportArchive,
   onExportArchive
@@ -304,6 +330,7 @@ const Dashboard = ({
   onCreate: () => void;
   onDuplicate: () => void;
   onOpen: (resume: ResumeRecord) => void;
+  onDelete: (id: string) => void;
   onImportPdf: (file: File) => void;
   onImportArchive: (file: File) => void;
   onExportArchive: () => void;
@@ -369,7 +396,7 @@ const Dashboard = ({
               resume={resume}
               active={resume.id === active.id}
               onOpen={() => onOpen(resume)}
-              onDuplicate={onDuplicate}
+              onDelete={() => onDelete(resume.id)}
             />
           ))}
         </section>
@@ -534,7 +561,7 @@ const FilterItem = ({ active = false, label, value }: { active?: boolean; label:
   </li>
 );
 
-const ResumeGroup = ({ resume, active, onOpen, onDuplicate }: { resume: ResumeRecord; active: boolean; onOpen: () => void; onDuplicate: () => void }) => {
+const ResumeGroup = ({ resume, active, onOpen, onDelete }: { resume: ResumeRecord; active: boolean; onOpen: () => void; onDelete: () => void }) => {
   const template = templates.find((item) => item.id === resume.activeTemplateId);
   const checks = runAtsChecks(resume);
   const warnings = checks.filter((check) => check.status !== 'pass').length;
@@ -557,9 +584,8 @@ const ResumeGroup = ({ resume, active, onOpen, onDuplicate }: { resume: ResumeRe
           </div>
           <p className="summary">{resume.content.summary || 'No summary yet. Open the editor to add a focused positioning statement.'}</p>
           <div className="actions">
-            <button className="button green" onClick={onOpen}><FolderOpen />Open Editor</button>
-            <button className="button" onClick={onDuplicate}><Copy />Duplicate</button>
-            <button className="button ghost"><MoreHorizontal />More</button>
+            <button className="button green" onClick={onOpen}><Pencil />Edit</button>
+            <button className="button ghost danger" onClick={onDelete}><Trash2 />Delete</button>
           </div>
         </div>
       </div>
@@ -1218,44 +1244,30 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
           </div>
         )}
         {highlights.map((item, index) => (
-          <article className={`profile-highlight-row${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
-            <div className="profile-highlight-index" aria-hidden="true">{index + 1}</div>
-            <div className="profile-highlight-body">
-              <div className="profile-highlight-head">
-                <div>
-                  <strong>Highlight {index + 1}</strong>
-                  <span>{item.hidden ? 'Hidden from resume' : highlightsWillCompile ? 'Visible on resume' : 'Not compiling'}</span>
-                </div>
-                <div className="profile-highlight-actions">
-                  <button
-                    className="ghost-button item-hide"
-                    aria-label={item.hidden ? `Show profile highlight ${index + 1}` : `Hide profile highlight ${index + 1}`}
-                    title={item.hidden ? 'Show highlight' : 'Hide highlight'}
-                    onClick={() => onChange((r) => updateProfileHighlight(r, index, { hidden: !item.hidden }))}
-                  >
-                    {item.hidden ? <EyeOff /> : <Eye />}
-                  </button>
-                  <button
-                    className="ghost-button danger item-delete"
-                    aria-label={`Remove profile highlight ${index + 1}`}
-                    title="Remove highlight"
-                    onClick={() => onChange((r) => updateProfileHighlights(r, profileHighlightsForResume(r).filter((_, i) => i !== index)))}
-                  >
-                    <Trash2 />
-                  </button>
-                </div>
-              </div>
-              <label className="stacked-field profile-highlight-field">
-                Profile highlight item
-                <textarea
-                  value={item.text}
-                  rows={3}
-                  placeholder="Led a 4-person migration that reduced report generation time by 38%."
-                  onChange={(e) => onChange((r) => updateProfileHighlight(r, index, { text: e.target.value }))}
-                />
-              </label>
-            </div>
-          </article>
+          <div className={`highlight-row${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
+            <span className="highlight-num" aria-hidden="true">{index + 1}</span>
+            <RichTextArea
+              ariaLabel="Profile highlight item"
+              value={item.text}
+              rows={2}
+              placeholder="Led a 4-person migration that reduced report generation time by 38%."
+              onChange={(v) => onChange((r) => updateProfileHighlight(r, index, { text: v }))}
+            />
+            <button
+              className="ghost-button item-hide"
+              aria-label={item.hidden ? `Show profile highlight ${index + 1}` : `Hide profile highlight ${index + 1}`}
+              onClick={() => onChange((r) => updateProfileHighlight(r, index, { hidden: !item.hidden }))}
+            >
+              {item.hidden ? <EyeOff /> : <Eye />}
+            </button>
+            <button
+              className="ghost-button danger item-delete"
+              aria-label={`Remove profile highlight ${index + 1}`}
+              onClick={() => onChange((r) => updateProfileHighlights(r, profileHighlightsForResume(r).filter((_, i) => i !== index)))}
+            >
+              <Trash2 />
+            </button>
+          </div>
         ))}
       </div>
     </div>
@@ -1297,7 +1309,7 @@ const ExperienceEditor = ({ active, onChange }: SectionEditorProps) => (
           <Field label="Location"><input value={item.location} onChange={(e) => onChange((r) => updateExperience(r, index, { location: e.target.value }))} /></Field>
           <Field label="Dates"><input value={[item.startDate, item.endDate].filter(Boolean).join(' - ')} onChange={(e) => onChange((r) => updateDates(r, index, e.target.value))} /></Field>
         </div>
-        <label className="stacked-field">Highlights<textarea placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(e) => onChange((r) => updateExperience(r, index, { highlights: e.target.value.split('\n') }))} /></label>
+        <RichTextArea label="Highlights" placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(v) => onChange((r) => updateExperience(r, index, { highlights: v.split('\n') }))} />
       </article>
     ))}
   </div>
@@ -1338,7 +1350,7 @@ const EducationEditor = ({ active, onChange }: SectionEditorProps) => (
           <Field label="Location"><input value={item.location} onChange={(e) => onChange((r) => updateEducation(r, index, { location: e.target.value }))} /></Field>
           <Field label="Dates"><input value={[item.startDate, item.endDate].filter(Boolean).join(' - ')} onChange={(e) => onChange((r) => updateEducationDates(r, index, e.target.value))} /></Field>
         </div>
-        <label className="stacked-field">Highlights<textarea placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(e) => onChange((r) => updateEducation(r, index, { highlights: e.target.value.split('\n') }))} /></label>
+        <RichTextArea label="Highlights" placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(v) => onChange((r) => updateEducation(r, index, { highlights: v.split('\n') }))} />
       </article>
     ))}
   </div>
@@ -1377,8 +1389,8 @@ const ProjectsEditor = ({ active, onChange }: SectionEditorProps) => (
           <Field label="Name"><input value={item.name} onChange={(e) => onChange((r) => updateProjects(r, index, { name: e.target.value }))} /></Field>
           <Field label="Links"><input value={item.links.join(', ')} onChange={(e) => onChange((r) => updateProjects(r, index, { links: splitList(e.target.value) }))} /></Field>
         </div>
-        <label className="stacked-field">Description<textarea value={item.description} onChange={(e) => onChange((r) => updateProjects(r, index, { description: e.target.value }))} /></label>
-        <label className="stacked-field">Highlights<textarea placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(e) => onChange((r) => updateProjects(r, index, { highlights: e.target.value.split('\n') }))} /></label>
+        <RichTextArea label="Description" value={item.description} onChange={(v) => onChange((r) => updateProjects(r, index, { description: v }))} />
+        <RichTextArea label="Highlights" placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(v) => onChange((r) => updateProjects(r, index, { highlights: v.split('\n') }))} />
       </article>
     ))}
   </div>
@@ -1440,11 +1452,91 @@ const CustomSectionsEditor = ({ active, onChange }: SectionEditorProps) => (
           </button>
         </div>
         <Field label="Title"><input value={item.title} onChange={(e) => onChange((r) => updateCustomSections(r, index, { title: e.target.value }))} /></Field>
-        <label className="stacked-field">Body<textarea value={item.body} onChange={(e) => onChange((r) => updateCustomSections(r, index, { body: e.target.value }))} /></label>
+        <RichTextArea label="Body" value={item.body} onChange={(v) => onChange((r) => updateCustomSections(r, index, { body: v }))} />
       </article>
     ))}
   </div>
 );
+
+const RichTextArea = ({
+  label,
+  ariaLabel,
+  value,
+  placeholder,
+  rows = 4,
+  onChange,
+}: {
+  label?: string;
+  ariaLabel?: string;
+  value: string;
+  placeholder?: string;
+  rows?: number;
+  onChange: (value: string) => void;
+}) => {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  const wrapSelection = (open: string, close: string) => {
+    const el = ref.current;
+    if (!el) return;
+    const { selectionStart: start, selectionEnd: end, value: cur } = el;
+    const selected = cur.slice(start, end);
+    const next = cur.slice(0, start) + open + selected + close + cur.slice(end);
+    onChange(next);
+    requestAnimationFrame(() => {
+      const cursor = selected
+        ? start + open.length + selected.length + close.length
+        : start + open.length;
+      el.setSelectionRange(cursor, cursor);
+      el.focus();
+    });
+  };
+
+  const toolbar = (
+    <div className="rich-toolbar" role="toolbar" aria-label={label ? `Formatting for ${label}` : 'Text formatting'}>
+      <button type="button" className="rich-btn rich-bold" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textbf{', '}'); }} title="Bold (\\textbf)"><strong>B</strong></button>
+      <button type="button" className="rich-btn rich-italic" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textit{', '}'); }} title="Italic (\\textit)"><em>I</em></button>
+      <button type="button" className="rich-btn rich-underline" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\underline{', '}'); }} title="Underline (\\underline)"><u>U</u></button>
+      <span className="rich-sep" />
+      {LATEX_COLORS.map((color) => (
+        <button
+          key={color.name}
+          type="button"
+          className="rich-color-swatch"
+          style={{ background: color.hex }}
+          onMouseDown={(e) => { e.preventDefault(); wrapSelection(`\\textcolor{${color.name}}{`, '}'); }}
+          title={`${color.label} (\\textcolor{${color.name}})`}
+        />
+      ))}
+    </div>
+  );
+
+  const inner = (
+    <div className="rich-wrap">
+      {toolbar}
+      <div className="rich-text-frame">
+        <pre className="rich-text-highlight" ref={preRef} aria-hidden="true">
+          {renderRichLatexText(value)}
+        </pre>
+        <textarea
+          ref={ref}
+          rows={rows}
+          value={value}
+          placeholder={placeholder}
+          aria-label={ariaLabel}
+          onChange={(e) => onChange(e.target.value)}
+          onScroll={(e) => {
+            if (preRef.current)
+              preRef.current.style.transform = `translateY(-${e.currentTarget.scrollTop}px)`;
+          }}
+        />
+      </div>
+    </div>
+  );
+
+  if (!label) return inner;
+  return <label className="stacked-field">{label}{inner}</label>;
+};
 
 const Field = ({ label, children }: { label: string; children: ReactNode }) => (
   <label className="field-row">
@@ -1598,17 +1690,21 @@ const PreviewPanel = ({
 
 const MiniPaper = ({ resume }: { resume: ResumeRecord }) => (
   <div className="mini-preview" aria-hidden="true">
-    <div className="paper">
-      <div className="paper-name">{resume.content.profile.fullName || resume.title}</div>
-      <div className="paper-role">{resume.content.profile.headline || 'Resume'}</div>
-      <div className="paper-rule" />
-      <div className="paper-section">Summary</div>
-      <div className="lines"><span className="line dark" /><span className="line mid" /><span className="line short" /></div>
-      <div className="paper-section">Experience</div>
-      <div className="lines"><span className="line dark short" /><span className="line" /><span className="line mid" /><span className="line tiny" /></div>
-      <div className="paper-section">Skills</div>
-      <div className="lines"><span className="line mid" /><span className="line short" /></div>
-    </div>
+    {resume.thumbnailDataUrl ? (
+      <img src={resume.thumbnailDataUrl} alt="" className="mini-preview-thumb" />
+    ) : (
+      <div className="paper">
+        <div className="paper-name">{resume.content.profile.fullName || resume.title}</div>
+        <div className="paper-role">{resume.content.profile.headline || 'Resume'}</div>
+        <div className="paper-rule" />
+        <div className="paper-section">Summary</div>
+        <div className="lines"><span className="line dark" /><span className="line mid" /><span className="line short" /></div>
+        <div className="paper-section">Experience</div>
+        <div className="lines"><span className="line dark short" /><span className="line" /><span className="line mid" /><span className="line tiny" /></div>
+        <div className="paper-section">Skills</div>
+        <div className="lines"><span className="line mid" /><span className="line short" /></div>
+      </div>
+    )}
   </div>
 );
 

@@ -32,7 +32,7 @@ import {
   type BundledLatexProject,
   type BundledLatexProjectSummary
 } from '../services/latexTemplates';
-import { formatPdfPreviewUrl, highlightLatexSource } from './latexUtils';
+import { formatPdfPreviewUrl, highlightLatexSource, LATEX_COLORS } from './latexUtils';
 
 type LatexProjectState = Omit<BundledLatexProject, 'readOnly'> & {
   readOnly: boolean;
@@ -234,24 +234,61 @@ const LatexCodeEditor = ({
   onChange: (contents: string) => void;
 }) => {
   const highlightRef = useRef<HTMLPreElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const wrapSelection = (open: string, close: string) => {
+    const el = textareaRef.current;
+    if (!el || readOnly) return;
+    const { selectionStart: start, selectionEnd: end, value: cur } = el;
+    const selected = cur.slice(start, end);
+    const next = cur.slice(0, start) + open + selected + close + cur.slice(end);
+    onChange(next);
+    requestAnimationFrame(() => {
+      const cursor = selected
+        ? start + open.length + selected.length + close.length
+        : start + open.length;
+      el.setSelectionRange(cursor, cursor);
+      el.focus();
+    });
+  };
 
   return (
-    <div className="latex-code-frame">
-      <pre className="latex-code-highlight" ref={highlightRef} aria-hidden="true">
-        {highlightLatexSource(contents)}
-      </pre>
-      <textarea
-        className="latex-code-editor"
-        value={contents}
-        readOnly={readOnly}
-        spellCheck={false}
-        onScroll={(event) => {
-          if (!highlightRef.current) return;
-          highlightRef.current.style.transform = `translate(${-event.currentTarget.scrollLeft}px, ${-event.currentTarget.scrollTop}px)`;
-        }}
-        onChange={(event) => onChange(event.target.value)}
-        aria-label={`Editing ${activePath}`}
-      />
+    <div className="latex-code-editor-wrap">
+      <div className="rich-toolbar" role="toolbar" aria-label="LaTeX formatting">
+        <button type="button" className="rich-btn rich-bold" disabled={readOnly} onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textbf{', '}'); }} title="Bold (\\textbf)"><strong>B</strong></button>
+        <button type="button" className="rich-btn rich-italic" disabled={readOnly} onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textit{', '}'); }} title="Italic (\\textit)"><em>I</em></button>
+        <button type="button" className="rich-btn rich-underline" disabled={readOnly} onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\underline{', '}'); }} title="Underline (\\underline)"><u>U</u></button>
+        <span className="rich-sep" />
+        {LATEX_COLORS.map((color) => (
+          <button
+            key={color.name}
+            type="button"
+            className="rich-color-swatch"
+            disabled={readOnly}
+            style={{ background: color.hex }}
+            onMouseDown={(e) => { e.preventDefault(); wrapSelection(`\\textcolor{${color.name}}{`, '}'); }}
+            title={`${color.label} (\\textcolor{${color.name}})`}
+          />
+        ))}
+      </div>
+      <div className="latex-code-frame">
+        <pre className="latex-code-highlight" ref={highlightRef} aria-hidden="true">
+          {highlightLatexSource(contents)}
+        </pre>
+        <textarea
+          ref={textareaRef}
+          className="latex-code-editor"
+          value={contents}
+          readOnly={readOnly}
+          spellCheck={false}
+          onScroll={(event) => {
+            if (!highlightRef.current) return;
+            highlightRef.current.style.transform = `translate(${-event.currentTarget.scrollLeft}px, ${-event.currentTarget.scrollTop}px)`;
+          }}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={`Editing ${activePath}`}
+        />
+      </div>
     </div>
   );
 };

@@ -165,6 +165,7 @@ export interface ResumeRecord {
   createdAt: string;
   updatedAt: string;
   version: number;
+  thumbnailDataUrl?: string;
 }
 
 export interface CompileArtifact {
