@@ -124,6 +124,100 @@ export const sampleResume = (): ResumeRecord => {
   return resume;
 };
 
+export const starterResume = (): ResumeRecord => {
+  const resume = createResume('Untitled Resume', 'awesome-cv');
+  resume.content.profile = {
+    ...emptyContent().profile,
+    fullName: 'First Last',
+    email: 'your.email@example.com',
+    phone: '(XXX) XXX-XXXX',
+    links: ['yourwebsite.com', 'github.com/yourusername'],
+  };
+  resume.content.profileHighlights = [
+    { id: id('highlight'), text: 'Brief highlight sentence one — e.g., years of industry experience or a career milestone.' },
+    { id: id('highlight'), text: 'Brief highlight sentence two — e.g., academic background or research focus.' },
+    { id: id('highlight'), text: 'Brief highlight sentence three — e.g., notable achievement such as patents or awards.' },
+    { id: id('highlight'), text: 'Brief highlight sentence four — e.g., key deliverable deployed in production.' },
+  ];
+  resume.content.experience = [
+    {
+      id: id('exp'),
+      company: 'Company Name',
+      role: 'Senior Job Title',
+      location: 'City, State',
+      startDate: 'Month Year',
+      endDate: 'Present',
+      highlights: [
+        'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.',
+        'Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.',
+        'Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.',
+        'Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.',
+      ],
+    },
+    {
+      id: id('exp'),
+      company: 'Company Name',
+      role: 'Mid-Level Job Title',
+      location: 'City, State',
+      startDate: 'Month Year',
+      endDate: 'Month Year',
+      highlights: [
+        'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore.',
+        'Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo.',
+        'Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.',
+        'Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim.',
+      ],
+    },
+    {
+      id: id('exp'),
+      company: 'Company Name',
+      role: 'Junior Job Title',
+      location: 'City, State',
+      startDate: 'Month Year',
+      endDate: 'Month Year',
+      highlights: [
+        'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore.',
+        'Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo.',
+        'Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.',
+      ],
+    },
+  ];
+  resume.content.education = [
+    {
+      id: id('edu'),
+      school: 'University Name',
+      degree: 'Ph.D. in Your Field',
+      location: 'City, State',
+      startDate: '',
+      endDate: 'Year',
+      highlights: [
+        'Thesis Title: Lorem ipsum dolor sit amet, consectetur adipiscing elit.',
+        'Advisor: Advisor Name, Ph.D.',
+      ],
+    },
+    {
+      id: id('edu'),
+      school: 'University Name',
+      degree: 'M.S. in Your Field',
+      location: 'City, State',
+      startDate: '',
+      endDate: 'Year',
+      highlights: [],
+    },
+    {
+      id: id('edu'),
+      school: 'University Name',
+      degree: 'B.S. in Your Field',
+      location: 'City, State',
+      startDate: '',
+      endDate: 'Year',
+      highlights: [],
+    },
+  ];
+  resume.content.skills = ['Language A', 'Language B', 'Tool A', 'Tool B', 'Framework A', 'Framework B', 'Framework C'];
+  return resume;
+};
+
 export const createResume = (title: string, templateId: TemplateId): ResumeRecord => {
   const timestamp = now();
   const resume: ResumeRecord = {

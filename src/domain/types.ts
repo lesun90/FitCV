@@ -248,6 +248,7 @@ export interface AppPreference {
   id: 'default';
   theme: 'light' | 'dark';
   activeResumeId?: string;
+  seededOnce?: boolean;
   panels: {
     style: boolean;
     preview: boolean;

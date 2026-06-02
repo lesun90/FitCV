@@ -61,7 +61,7 @@ button,
   display: inline-flex;
   gap: 8px;
   justify-content: center;
-  min-height: 40px;
+  min-height: 44px;
   padding: 9px 12px;
   text-decoration: none;
   transition: background 170ms ease, border-color 170ms ease, color 170ms ease, transform 170ms ease;
@@ -76,11 +76,17 @@ button:hover,
 
 button:focus-visible,
 .button:focus-visible,
-.chrome-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible {
-  outline: 3px solid rgba(27, 27, 24, 0.16);
+.chrome-button:focus-visible {
+  outline: 3px solid rgba(22, 118, 90, 0.55);
   outline-offset: 2px;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: rgba(22, 118, 90, 0.45);
+  box-shadow: 0 0 0 3px rgba(22, 118, 90, 0.1);
+  outline: none;
 }
 
 button:disabled {
@@ -144,6 +150,33 @@ p {
   display: grid;
   min-height: 100dvh;
   place-items: center;
+}
+
+.empty-library {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 64px 24px;
+  text-align: center;
+}
+
+.empty-library-icon {
+  color: var(--faint);
+  height: 36px;
+  width: 36px;
+}
+
+.empty-library h2 {
+  font-size: 18px;
+  font-weight: 760;
+  margin: 0;
+}
+
+.empty-library p {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 4px;
 }
 
 /* Standalone LaTeX editor */
@@ -1341,6 +1374,20 @@ p {
   min-height: 120px;
   min-width: 0;
   padding: 13px;
+}
+
+.fit-card-cta {
+  border-style: dashed;
+  opacity: 0.6;
+}
+
+.fit-card-cta .doc-mini {
+  opacity: 0.35;
+}
+
+.fit-card-cta .company,
+.fit-card-cta .role {
+  color: var(--faint);
 }
 
 .fit-top {
@@ -2782,6 +2829,11 @@ pre {
   border-top: none;
   overflow: hidden;
   position: relative;
+}
+
+.rich-text-frame:focus-within {
+  border-color: rgba(22, 118, 90, 0.45);
+  box-shadow: 0 0 0 3px rgba(22, 118, 90, 0.1);
 }
 
 .rich-text-highlight {

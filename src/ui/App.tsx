@@ -27,9 +27,9 @@ import {
 } from 'lucide-react';
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
 import { runAtsChecks } from '../domain/checks';
-import { clearReviewMarkersForField, createResume, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, switchTemplate, touchResume } from '../domain/resume';
+import { clearReviewMarkersForField, createResume, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, starterResume, switchTemplate, touchResume } from '../domain/resume';
 import { analyzeTemplateCompatibility, templates } from '../domain/templates';
-import type { CompileArtifact, LayoutModule, ProfileFieldKey, ProfileHighlightItem, ResumeRecord, SectionKey, TemplateId } from '../domain/types';
+import type { CompileArtifact, FittedCvRecord, LayoutModule, ProfileFieldKey, ProfileHighlightItem, ResumeRecord, SectionKey, TemplateId } from '../domain/types';
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
@@ -79,7 +79,9 @@ type ViewMode = 'dashboard' | 'editor';
 export const App = () => {
   if (window.location.pathname === '/latexeditor') return <LatexEditorRoute />;
 
+  const [loaded, setLoaded] = useState(false);
   const [resumes, setResumes] = useState<ResumeRecord[]>([]);
+  const [fittedCvs, setFittedCvs] = useState<FittedCvRecord[]>([]);
   const [activeId, setActiveId] = useState<string>();
   const [artifact, setArtifact] = useState<CompileArtifact>();
   const [busy, setBusy] = useState('');
@@ -98,17 +100,33 @@ export const App = () => {
   }, []);
 
   const hydrate = async () => {
-    const stored = await storage.listResumes();
+    const [stored, pref, storedFittedCvs] = await Promise.all([
+      storage.listResumes(),
+      storage.getPreference(),
+      storage.listFittedCvs(),
+    ]);
+    setFittedCvs(storedFittedCvs);
     if (stored.length === 0) {
-      const seed = sampleResume();
-      await storage.saveResume(seed);
-      setResumes([seed]);
-      setActiveId(seed.id);
+      if (!pref?.seededOnce) {
+        const seed = sampleResume();
+        await storage.saveResume(seed);
+        await storage.savePreference({
+          schemaVersion: 1,
+          id: 'default',
+          theme: 'light',
+          seededOnce: true,
+          panels: { style: true, preview: true },
+        });
+        setResumes([seed]);
+        setActiveId(seed.id);
+      }
+      setLoaded(true);
       return;
     }
     const sorted = stored.map(ensureTemplateLayouts).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     setResumes(sorted);
-    setActiveId((await storage.getPreference())?.activeResumeId ?? sorted[0].id);
+    setActiveId(pref?.activeResumeId ?? sorted[0].id);
+    setLoaded(true);
   };
 
   const save = async (resume: ResumeRecord) => {
@@ -189,7 +207,7 @@ export const App = () => {
   }, [active?.version, autoCompile]);
 
   const createBlank = () => {
-    void save(createResume('Untitled Resume', 'awesome-cv'));
+    void save(starterResume());
     setMode('editor');
   };
 
@@ -262,12 +280,13 @@ export const App = () => {
     }
   };
 
-  if (!active) return <main className="empty">Loading FitCV...</main>;
+  if (!loaded) return <main className="empty">Loading FitCV…</main>;
 
-  if (mode === 'dashboard') {
+  if (mode === 'dashboard' || !active) {
     return (
       <Dashboard
         resumes={resumes}
+        fittedCvs={fittedCvs}
         active={active}
         reviewCount={reviewCount}
         warningCount={warningCount}
@@ -308,6 +327,7 @@ export const App = () => {
 
 const Dashboard = ({
   resumes,
+  fittedCvs,
   active,
   reviewCount,
   warningCount,
@@ -322,7 +342,8 @@ const Dashboard = ({
   onExportArchive
 }: {
   resumes: ResumeRecord[];
-  active: ResumeRecord;
+  fittedCvs: FittedCvRecord[];
+  active?: ResumeRecord;
   reviewCount: number;
   warningCount: number;
   busy: string;
@@ -390,11 +411,19 @@ const Dashboard = ({
         </aside>
 
         <section className="resume-library" aria-label="Resume groups">
-          {resumes.map((resume) => (
+          {resumes.length === 0 ? (
+            <div className="empty-library">
+              <FilePlus2 className="empty-library-icon" />
+              <h2>No resumes</h2>
+              <p>Create a resume to get started.</p>
+              <button className="button green" onClick={onCreate}><FilePlus2 />Create resume</button>
+            </div>
+          ) : resumes.map((resume) => (
             <ResumeGroup
               key={resume.id}
               resume={resume}
-              active={resume.id === active.id}
+              fittedCvs={fittedCvs.filter((cv) => cv.sourceResumeId === resume.id)}
+              active={resume.id === active?.id}
               onOpen={() => onOpen(resume)}
               onDelete={() => onDelete(resume.id)}
             />
@@ -561,7 +590,7 @@ const FilterItem = ({ active = false, label, value }: { active?: boolean; label:
   </li>
 );
 
-const ResumeGroup = ({ resume, active, onOpen, onDelete }: { resume: ResumeRecord; active: boolean; onOpen: () => void; onDelete: () => void }) => {
+const ResumeGroup = ({ resume, fittedCvs, active, onOpen, onDelete }: { resume: ResumeRecord; fittedCvs: FittedCvRecord[]; active: boolean; onOpen: () => void; onDelete: () => void }) => {
   const template = templates.find((item) => item.id === resume.activeTemplateId);
   const checks = runAtsChecks(resume);
   const warnings = checks.filter((check) => check.status !== 'pass').length;
@@ -592,35 +621,51 @@ const ResumeGroup = ({ resume, active, onOpen, onDelete }: { resume: ResumeRecor
 
       <div className="fit-strip">
         <div className="strip-head">
-          <h3>Resume status</h3>
-          <p>Quick signals before opening</p>
+          <h3>Fitted CVs</h3>
+          <p>Job-specific versions of this resume</p>
         </div>
         <div className="fit-grid">
-          <FitCard title="Profile completeness" value={resume.content.profile.email && resume.content.profile.phone ? 'Ready' : 'Needs contact'} tone={resume.content.profile.email && resume.content.profile.phone ? 'high' : 'mid'} />
-          <FitCard title="Template coverage" value={template?.name ?? 'Template'} tone="high" />
-          <FitCard title="Review markers" value={resume.reviewMarkers.filter((marker) => marker.needsReview).length ? 'Open' : 'Clear'} tone={resume.reviewMarkers.some((marker) => marker.needsReview) ? 'mid' : 'high'} />
+          {fittedCvs.length > 0 ? (
+            fittedCvs.map((cv) => (
+              <FittedCvCard key={cv.id} fittedCv={cv} />
+            ))
+          ) : (
+            <FitCardCta />
+          )}
         </div>
       </div>
     </article>
   );
 };
 
-const FitCard = ({ title, value, tone }: { title: string; value: string; tone: 'high' | 'mid' | 'low' }) => (
+const FittedCvCard = ({ fittedCv }: { fittedCv: FittedCvRecord }) => (
   <article className="fit-card">
     <div className="fit-top">
       <div className="doc-mini"><span /><span /><span /><span /></div>
       <div className="fit-title">
-        <div className="company">{title}</div>
-        <div className="role">{value}</div>
+        <div className="company">Fitted CV</div>
+        <div className="role">{fittedCv.title}</div>
       </div>
     </div>
     <div className="fit-footer">
-      <span className={`score ${tone}`}>{tone === 'high' ? 'OK' : tone === 'mid' ? '!' : 'Fix'}</span>
-      <span className="compile">local</span>
-      <span className="date">now</span>
+      <span className="score high">{fittedCv.acceptedChangeIds.length} changes</span>
+      <span className="date">{formatRelative(fittedCv.updatedAt)}</span>
     </div>
   </article>
 );
+
+const FitCardCta = () => (
+  <article className="fit-card fit-card-cta">
+    <div className="fit-top">
+      <div className="doc-mini"><span /><span /><span /><span /></div>
+      <div className="fit-title">
+        <div className="company">No fitted CVs yet</div>
+        <div className="role">Fit to a job description to create a tailored version here</div>
+      </div>
+    </div>
+  </article>
+);
+
 
 const StylePanel = ({
   active,
