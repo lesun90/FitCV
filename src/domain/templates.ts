@@ -50,6 +50,7 @@ const baseFields: TemplateSchemaField[] = [
   { path: 'content.profile.email', label: 'Email', section: 'profile', required: true },
   { path: 'content.profile.phone', label: 'Phone', section: 'profile' },
   { path: 'content.profile.location', label: 'Location', section: 'profile' },
+  { path: 'content.profile.linkedin', label: 'LinkedIn', section: 'profile' },
   { path: 'content.summary', label: 'Summary', section: 'summary' },
   { path: 'content.experience', label: 'Experience', section: 'experience' },
   { path: 'content.education', label: 'Education', section: 'education' },
@@ -62,6 +63,7 @@ const profileRenderMapping: TemplateRenderMapping[] = [
   { fieldPath: 'content.profile.email', latexTarget: 'header.email' },
   { fieldPath: 'content.profile.phone', latexTarget: 'header.phone' },
   { fieldPath: 'content.profile.location', latexTarget: 'header.location' },
+  { fieldPath: 'content.profile.linkedin', latexTarget: 'header.linkedin' },
   { fieldPath: 'content.summary', latexTarget: 'section.summary' }
 ];
 

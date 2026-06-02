@@ -21,7 +21,6 @@ import {
   Pencil,
   Plus,
   RotateCw,
-  Settings,
   ShieldCheck,
   Terminal,
   Trash2,
@@ -38,7 +37,7 @@ import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
 import { formatPdfPreviewUrl } from './latexUtils';
 import { downloadBlob, StatusPill } from './shared';
-import { getTemplateAdapter, hasTemplateAdapter } from '../domain/templateAdapters';
+import { clampSpaceValue, defaultSpaceValue, getTemplateAdapter, hasTemplateAdapter, MAX_SPACE_VALUE, MIN_SPACE_VALUE } from '../domain/templateAdapters';
 
 const sectionLabels: Record<SectionKey, string> = {
   summary: 'Summary',
@@ -200,14 +199,19 @@ export const App = () => {
   };
 
   const importArchive = async (file: File) => {
-    setBusy('Importing archive');
-    const archive = await importFitcvArchive(file);
-    for (const resume of archive.resumes) await storage.saveResume(resume);
-    for (const fittedCv of archive.fittedCvs) await storage.saveFittedCv(fittedCv);
-    for (const jobDescription of archive.jobDescriptions) await storage.saveJobDescription(jobDescription);
-    for (const scoringReport of archive.scoringReports) await storage.saveScoringReport(scoringReport);
-    await hydrate();
-    setBusy('');
+    try {
+      setBusy('Importing archive');
+      const archive = await importFitcvArchive(file);
+      for (const resume of archive.resumes) await storage.saveResume(resume);
+      for (const fittedCv of archive.fittedCvs) await storage.saveFittedCv(fittedCv);
+      for (const jobDescription of archive.jobDescriptions) await storage.saveJobDescription(jobDescription);
+      for (const scoringReport of archive.scoringReports) await storage.saveScoringReport(scoringReport);
+      await hydrate();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Archive import failed.');
+    } finally {
+      setBusy('');
+    }
   };
 
   const exportArchive = async () => {
@@ -262,13 +266,11 @@ export const App = () => {
       artifact={artifact}
       autoCompile={autoCompile}
       busy={busy}
-      checks={checks}
       cleanCompile={cleanCompile}
       error={error}
       pdfUrl={pdfUrl}
       reviewCount={reviewCount}
       unsupported={compatibility?.unsupportedSections ?? []}
-      warningCount={warningCount}
       onBack={() => setMode('dashboard')}
       onChange={updateActive}
       onCompile={compile}
@@ -382,13 +384,11 @@ const EditorWorkspace = ({
   artifact,
   autoCompile,
   busy,
-  checks,
   cleanCompile,
   error,
   pdfUrl,
   reviewCount,
   unsupported,
-  warningCount,
   onBack,
   onChange,
   onCompile,
@@ -401,13 +401,11 @@ const EditorWorkspace = ({
   artifact?: CompileArtifact;
   autoCompile: boolean;
   busy: string;
-  checks: ReturnType<typeof runAtsChecks>;
   cleanCompile: boolean;
   error: string;
   pdfUrl: string;
   reviewCount: number;
   unsupported: SectionKey[];
-  warningCount: number;
   onBack: () => void;
   onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
   onCompile: () => void;
@@ -455,7 +453,6 @@ const EditorWorkspace = ({
           {cleanCompile ? <CheckCircle2 /> : <Clock3 />}
           {cleanCompile ? 'PDF ready' : 'Not backed up'}
         </span>
-        <button className="chrome-icon" aria-label="Editor settings"><Settings /></button>
         <button
           className={`chrome-button${autoCompile ? ' selected' : ''}`}
           onClick={onToggleAutoCompile}
@@ -663,7 +660,7 @@ const StylePanel = ({
 
   const addLayoutControlModule = (kind: 'space' | 'new-page') => {
     const newModule: LayoutModule = kind === 'space'
-      ? { id: createId('module-space'), kind: 'space', enabled: true, value: 12 }
+      ? { id: createId('module-space'), kind: 'space', enabled: true, value: defaultSpaceValue }
       : { id: createId('module-new-page'), kind: 'new-page', enabled: true };
     onChange((resume) => {
       const layout = [...(resume.templateLayouts[resume.activeTemplateId] ?? [])];
@@ -988,7 +985,7 @@ const EditorPanel = ({
     <div className="editor-subhead">{selectedModule ? labelForLayoutModule(selectedModule) : sectionLabels[selectedSection]}</div>
     <div className="section-editor" key={selectedModule?.id ?? selectedSection}>
       {selectedModule && selectedModule.kind !== 'section'
-        ? renderLayoutControlEditor(selectedModule, active, onChange)
+        ? renderLayoutControlEditor(selectedModule, onChange)
         : renderSectionEditor(selectedSection, active, onChange)}
     </div>
     {reviewCount > 0 && (
@@ -1004,13 +1001,12 @@ const EditorPanel = ({
 
 const renderLayoutControlEditor = (
   module: Exclude<LayoutModule, { kind: 'section' }>,
-  active: ResumeRecord,
   onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void
 ) => {
   if (module.kind === 'space') {
-    const value = Number.isFinite(module.value) ? module.value : 12;
+    const value = Number.isFinite(module.value) ? module.value : defaultSpaceValue;
     const updateSpaceValue = (rawValue: number) => {
-      const nextValue = Math.min(96, Math.max(0, Math.round(rawValue * 10) / 10));
+      const nextValue = clampSpaceValue(rawValue);
       onChange((resume) => updateLayoutModule(resume, module.id, (item) => item.kind === 'space' ? { ...item, value: nextValue } : item));
     };
     return (
@@ -1024,8 +1020,8 @@ const renderLayoutControlEditor = (
             <span>Space value: {value}pt</span>
             <input
               type="range"
-              min={0}
-              max={96}
+              min={MIN_SPACE_VALUE}
+              max={MAX_SPACE_VALUE}
               step={1}
               value={value}
               onChange={(e) => updateSpaceValue(Number(e.target.value))}
@@ -1037,8 +1033,8 @@ const renderLayoutControlEditor = (
               <input
                 aria-label="Space value in points"
                 type="number"
-                min={0}
-                max={96}
+                min={MIN_SPACE_VALUE}
+                max={MAX_SPACE_VALUE}
                 step={1}
                 value={value}
                 onChange={(e) => updateSpaceValue(Number(e.target.value))}
@@ -1100,6 +1096,37 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
   const profile = active.content.profile;
   const highlights = profileHighlightsForResume(active);
   const hiddenFields = profile.hiddenFields ?? [];
+  const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
+  const summaryModule = activeLayout.find((module) => module.kind === 'section' && module.section === 'summary');
+  const usesLayoutModules = hasTemplateAdapter(active.activeTemplateId);
+  const highlightsWillCompile = usesLayoutModules ? summaryModule?.enabled === true : !active.hiddenSections.includes('summary');
+  const visibleHighlightCount = highlightsWillCompile
+    ? highlights.filter((item) => !item.hidden && item.text.trim()).length
+    : 0;
+  const enableSummaryHighlights = () => onChange((resume) => {
+    const layout = resume.templateLayouts[resume.activeTemplateId] ?? [];
+    const existing = layout.find((module) => module.kind === 'section' && module.section === 'summary');
+    if (existing) return updateLayoutModule(resume, existing.id, (module) => ({ ...module, enabled: true }));
+
+    const sectionType = getTemplateAdapter(resume.activeTemplateId)?.sectionTypes.find((item) => item.section === 'summary');
+    if (!sectionType) return resume;
+    return touchResume({
+      ...resume,
+      templateLayouts: {
+        ...resume.templateLayouts,
+        [resume.activeTemplateId]: [
+          {
+            id: createId('module-summary'),
+            kind: 'section',
+            section: 'summary',
+            sectionType: sectionType.id,
+            enabled: true
+          },
+          ...layout
+        ]
+      }
+    });
+  });
   const textField = (
     field: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>,
     label: string,
@@ -1141,6 +1168,7 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
         {textField('location', 'Location', profile.location ?? '')}
         {textField('links', 'Links', (profile.links ?? []).join(', '), { parseValue: splitList })}
         {textField('gitlab', 'GitLab', profile.gitlab ?? '')}
+        {textField('linkedin', 'LinkedIn', profile.linkedin ?? '')}
         {nestedField('stackoverflow', 'id', 'Stack Overflow ID', profile.stackoverflow?.id ?? '')}
         {nestedField('stackoverflow', 'name', 'Stack Overflow name', profile.stackoverflow?.name ?? '')}
         {textField('twitter', 'Twitter', profile.twitter ?? '')}
@@ -1162,7 +1190,7 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
           <div>
             <h3>Profile highlights</h3>
             <span className="subhead-meta">
-              {highlights.filter((item) => !item.hidden && item.text.trim()).length} visible on resume
+              {visibleHighlightCount} visible on resume
             </span>
           </div>
           <button
@@ -1172,6 +1200,17 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
             <Plus />Add highlight
           </button>
         </div>
+        {!highlightsWillCompile && highlights.length > 0 && (
+          <div className="profile-highlight-warning">
+            <div>
+              <strong>Summary disabled</strong>
+              <span>Profile highlights are saved, but they will not compile until the Summary module is enabled.</span>
+            </div>
+            <button className="ghost-button" aria-label="Enable Summary highlights" onClick={enableSummaryHighlights}>
+              <Eye />Enable
+            </button>
+          </div>
+        )}
         {!highlights.length && (
           <div className="profile-highlight-empty">
             <strong>No highlights yet</strong>
@@ -1185,7 +1224,7 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
               <div className="profile-highlight-head">
                 <div>
                   <strong>Highlight {index + 1}</strong>
-                  <span>{item.hidden ? 'Hidden from resume' : 'Visible on resume'}</span>
+                  <span>{item.hidden ? 'Hidden from resume' : highlightsWillCompile ? 'Visible on resume' : 'Not compiling'}</span>
                 </div>
                 <div className="profile-highlight-actions">
                   <button
@@ -1660,12 +1699,6 @@ const updateProfileHighlight = (
   ));
   return updateProfileHighlights(resume, profileHighlights);
 };
-
-const patch = (resume: ResumeRecord, key: keyof ResumeRecord['content']['profile'], value: string) =>
-  editField(resume, `content.profile.${key}`, (next) => ({
-    ...next,
-    content: { ...next.content, profile: { ...next.content.profile, [key]: value } }
-  }));
 
 const splitList = (value: string) => value.split(',').map((item) => item.trim()).filter(Boolean);
 

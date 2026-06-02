@@ -6,11 +6,13 @@ import type { LatexProjectFile } from '../domain/latexProject';
 const compileMock = vi.fn();
 const initializeMock = vi.fn();
 const isInitializedMock = vi.fn();
+const terminateMock = vi.fn();
 
 vi.mock('texlyre-busytex', () => ({
   BusyTexRunner: vi.fn().mockImplementation(() => ({
     initialize: initializeMock,
     isInitialized: isInitializedMock,
+    terminate: terminateMock,
     getConfig: () => ({ engineMode: 'combined' })
   })),
   XeLatex: vi.fn().mockImplementation(() => ({ compile: compileMock })),
@@ -117,6 +119,30 @@ describe('LaTeX compiler service', () => {
     expect(result.logs.join('\n')).toContain('unicode-math.sty');
     expect(result.logs.join('\n')).toContain('mktextfm FontAwesome');
     expect(result.logs.join('\n')).toContain('resume.aux unavailable');
+  });
+
+  it('tears down the BusyTeX runner after each compile to avoid descriptor exhaustion', async () => {
+    compileMock.mockResolvedValue({
+      success: true,
+      pdf: new Uint8Array([1, 2, 3]),
+      log: 'ok',
+      exitCode: 0,
+      logs: []
+    });
+
+    await compileLatexProject({
+      engine: 'xelatex',
+      mainFile: 'resume.tex',
+      files: [textFile('resume.tex', '\\documentclass{article}')]
+    });
+    await compileLatexProject({
+      engine: 'xelatex',
+      mainFile: 'resume.tex',
+      files: [textFile('resume.tex', '\\documentclass{article}')]
+    });
+
+    expect(terminateMock).toHaveBeenCalledTimes(2);
+    expect(BusyTexRunner).toHaveBeenCalledTimes(2);
   });
 });
 

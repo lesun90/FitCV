@@ -91,6 +91,8 @@ export const compileLatexProject = async (request: LatexCompileRequest): Promise
       ],
       elapsedMs: Math.round(performance.now() - started)
     };
+  } finally {
+    resetSharedRunner();
   }
 };
 
@@ -113,6 +115,11 @@ const getSharedRunner = (): BusyTexRunner => {
     });
   }
   return sharedRunner;
+};
+
+const resetSharedRunner = () => {
+  sharedRunner?.terminate();
+  sharedRunner = null;
 };
 
 const createCompiler = (engine: LatexCompilerEngine) => {

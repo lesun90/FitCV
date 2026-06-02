@@ -112,6 +112,7 @@ describe('FitCV UI shell', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
 
     expect(screen.getByRole('textbox', { name: 'GitLab' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'LinkedIn' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Stack Overflow ID' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Google Scholar name' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Profile summary')).not.toBeInTheDocument();
@@ -123,6 +124,23 @@ describe('FitCV UI shell', () => {
     await waitFor(() => expect(screen.getAllByLabelText('Profile highlight item').length).toBeGreaterThan(1));
     expect(screen.getAllByRole('button', { name: /Hide profile highlight \d+|Show profile highlight \d+/ }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: /Remove profile highlight \d+/ }).length).toBeGreaterThan(0);
+  });
+
+  it('shows when profile highlights will not compile because Summary is disabled', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Open Editor/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Disable Summary' }));
+
+    await waitFor(() => expect(screen.getByText('Summary disabled')).toBeInTheDocument());
+    expect(screen.getByText('0 visible on resume')).toBeInTheDocument();
+    expect(screen.getByText('Profile highlights are saved, but they will not compile until the Summary module is enabled.')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enable Summary highlights' }));
+
+    await waitFor(() => expect(screen.queryByText('Summary disabled')).not.toBeInTheDocument());
+    expect(screen.getByText('1 visible on resume')).toBeInTheDocument();
   });
 
   it('clears compile busy state and surfaces errors when PDF compile throws', async () => {

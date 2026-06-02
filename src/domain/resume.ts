@@ -27,6 +27,7 @@ export const emptyContent = (): ResumeContent => ({
     location: '',
     links: [],
     gitlab: '',
+    linkedin: '',
     stackoverflow: {
       id: '',
       name: ''
@@ -67,6 +68,7 @@ export const sampleResume = (): ResumeRecord => {
     location: 'London, UK',
     links: ['linkedin.com/in/ada', 'github.com/ada'],
     gitlab: '',
+    linkedin: 'linkedin.com/in/ada',
     stackoverflow: {
       id: '',
       name: ''

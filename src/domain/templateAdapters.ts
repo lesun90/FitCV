@@ -1,6 +1,6 @@
 import type { LatexProjectFile } from './latexProject';
-import { escapeLatex } from './latex';
-import type { LayoutModule, ProfileFieldKey, ResumeRecord, SectionKey, TemplateId, TemplateKey } from './types';
+import { escapeLatex, visibleProfileHighlights } from './latex';
+import type { LayoutModule, ProfileFieldKey, ResumeRecord, SectionKey, TemplateKey } from './types';
 import { createId } from './ids';
 
 export type LatexProjectRenderResult = {
@@ -54,7 +54,9 @@ const sectionTypeBySection = Object.fromEntries(
 
 const defaultAwesomeSections: SectionKey[] = ['summary', 'education', 'experience', 'projects', 'skills', 'awards', 'customSections'];
 const legacySpaceValues = { small: 6, medium: 12, large: 18 };
-const defaultSpaceValue = 12;
+export const MIN_SPACE_VALUE = 0;
+export const MAX_SPACE_VALUE = 96;
+export const defaultSpaceValue = 12;
 
 export const templateAdapters: TemplateAdapter[] = [
   {
@@ -154,6 +156,7 @@ const renderAwesomeRoot = (resume: ResumeRecord, imports: string[]) => {
     visible('links') && links[0] ? `\\homepage{${escapeLatex(links[0])}}` : '',
     simpleProfileCommand('headline', 'position', profile.headline),
     simpleProfileCommand('gitlab', 'gitlab', profile.gitlab ?? ''),
+    simpleProfileCommand('linkedin', 'linkedin', profile.linkedin ?? ''),
     visible('stackoverflow') && stackoverflow?.id ? `\\stackoverflow{${escapeLatex(stackoverflow.id)}}{${escapeLatex(stackoverflow.name)}}` : '',
     simpleProfileCommand('twitter', 'twitter', profile.twitter ?? ''),
     simpleProfileCommand('x', 'x', profile.x ?? ''),
@@ -287,15 +290,9 @@ const resolveSpaceValue = (module: Extract<LayoutModule, { kind: 'space' }>) => 
   return clampSpaceValue(module.size ? legacySpaceValues[module.size] : defaultSpaceValue);
 };
 
-const clampSpaceValue = (value: number) => Math.min(96, Math.max(0, Math.round(value * 10) / 10));
+export const clampSpaceValue = (value: number) => Math.min(MAX_SPACE_VALUE, Math.max(MIN_SPACE_VALUE, Math.round(value * 10) / 10));
 
 const formatSpaceValue = (module: Extract<LayoutModule, { kind: 'space' }>) => `${resolveSpaceValue(module)}pt`;
-
-const visibleProfileHighlights = (resume: ResumeRecord) => {
-  const highlights = resume.content.profileHighlights ?? [];
-  if (highlights.length) return highlights.filter((item) => !item.hidden && item.text.trim()).map((item) => item.text.trim());
-  return resume.content.summary.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-};
 
 const renderCvItems = (items: string[], indent: string) => {
   const lines = items.filter((item) => item.trim());

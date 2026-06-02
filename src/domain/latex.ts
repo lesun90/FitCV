@@ -79,7 +79,7 @@ const renderSection = (resume: ResumeRecord, section: SectionKey) => {
 
 const namedSection = (title: string, body: string) => `\\section*{${escapeLatex(title)}}\n${body}`;
 
-const visibleProfileHighlights = (resume: ResumeRecord) => {
+export const visibleProfileHighlights = (resume: ResumeRecord) => {
   const highlights = resume.content.profileHighlights ?? [];
   if (highlights.length) return highlights.filter((item) => !item.hidden && item.text.trim()).map((item) => item.text.trim());
   return resume.content.summary.split(/\n+/).map((line) => line.trim()).filter(Boolean);

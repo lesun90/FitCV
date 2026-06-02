@@ -9,6 +9,7 @@ export type ProfileFieldKey =
   | 'location'
   | 'links'
   | 'gitlab'
+  | 'linkedin'
   | 'stackoverflow'
   | 'twitter'
   | 'x'
@@ -30,6 +31,7 @@ export interface Profile {
   location: string;
   links: string[];
   gitlab?: string;
+  linkedin?: string;
   stackoverflow?: {
     id: string;
     name: string;

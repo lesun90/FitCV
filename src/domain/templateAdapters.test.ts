@@ -163,6 +163,7 @@ describe('template adapters', () => {
       location: 'Arlington, VA',
       links: ['grace.dev'],
       gitlab: 'grace-lab',
+      linkedin: 'linkedin.com/in/grace-hopper',
       stackoverflow: { id: '42', name: 'Grace H.' },
       twitter: '@amazing-grace',
       x: 'grace-x',
@@ -185,6 +186,7 @@ describe('template adapters', () => {
     const result = await renderAdapterLatexProject(resume);
 
     expect(result.latexSource).toContain('\\gitlab{grace-lab}');
+    expect(result.latexSource).toContain('\\linkedin{linkedin.com/in/grace-hopper}');
     expect(result.latexSource).toContain('\\stackoverflow{42}{Grace H.}');
     expect(result.latexSource).toContain('\\googlescholar{scholar-id}{G. Hopper}');
     expect(result.latexSource).toContain('\\extrainfo{US Navy}');
