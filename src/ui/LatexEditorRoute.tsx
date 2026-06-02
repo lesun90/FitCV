@@ -283,7 +283,8 @@ const LatexCodeEditor = ({
           spellCheck={false}
           onScroll={(event) => {
             if (!highlightRef.current) return;
-            highlightRef.current.style.transform = `translate(${-event.currentTarget.scrollLeft}px, ${-event.currentTarget.scrollTop}px)`;
+            highlightRef.current.scrollTop = event.currentTarget.scrollTop;
+            highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
           }}
           onChange={(event) => onChange(event.target.value)}
           aria-label={`Editing ${activePath}`}
