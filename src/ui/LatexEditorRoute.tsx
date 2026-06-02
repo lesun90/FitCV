@@ -27,6 +27,7 @@ import {
   type LatexCompilerEngine
 } from '../services/latexCompiler';
 import {
+  getFreshTextFiles,
   listBundledLatexProjects,
   loadBundledLatexProject,
   type BundledLatexProject,
@@ -110,6 +111,25 @@ export const LatexEditorRoute = () => {
     debounceRef.current = setTimeout(() => void compileProject({ auto: true }), 1500);
     return () => clearTimeout(debounceRef.current);
   }, [project?.workingFiles, autoCompile]);
+
+  useEffect(() => {
+    if (!project?.id) return;
+    const id = project.id;
+    const handler = () => {
+      const freshByPath = new Map(getFreshTextFiles(id).map((f) => [f.path, f]));
+      setProject((prev) => {
+        if (!prev || prev.id !== id) return prev;
+        return {
+          ...prev,
+          workingFiles: prev.workingFiles.map((file) =>
+            file.kind === 'text' ? (freshByPath.get(file.path) ?? file) : file
+          )
+        };
+      });
+    };
+    window.addEventListener('latex-templates-updated', handler);
+    return () => window.removeEventListener('latex-templates-updated', handler);
+  }, [project?.id]);
 
   return (
     <main className="latex-shell">

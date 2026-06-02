@@ -96,6 +96,14 @@ export const loadBundledLatexProject = async (id: string): Promise<BundledLatexP
   };
 };
 
+export const getFreshTextFiles = (id: string): Extract<LatexProjectFile, { kind: 'text' }>[] =>
+  Object.entries(textModules)
+    .flatMap(([modulePath, contents]) => {
+      const parsed = parseTemplateModulePath(modulePath);
+      return parsed?.id === id ? [{ path: parsed.path, kind: 'text' as const, contents }] : [];
+    })
+    .filter((file) => !shouldIgnoreLatexPath(file.path) && getLatexFileKind(file.path) === 'text');
+
 const parseTemplateModulePath = (modulePath: string) => {
   const match = modulePath.match(/\.\.\/latex-templates\/([^/]+)\/(.+)$/);
   if (!match) return undefined;
@@ -107,3 +115,9 @@ const displayNameForTemplate = (id: string) =>
     .split('-')
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(' ');
+
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {
+    window.dispatchEvent(new CustomEvent('latex-templates-updated'));
+  });
+}
