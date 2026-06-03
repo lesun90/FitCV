@@ -134,12 +134,14 @@ export const LatexEditorRoute = () => {
   return (
     <main className="latex-shell">
       <header className="latex-topbar">
-        <div className="magic-brand">
-          <strong>FitCV</strong>
-          <span>/</span>
-          <em>LaTeX</em>
+        <div className="latex-title-cluster">
+          <div className="magic-brand">
+            <strong>FitCV</strong>
+            <span>/</span>
+            <em>LaTeX</em>
+          </div>
+          <div className="latex-route-note">Studio route</div>
         </div>
-        <div className="latex-route-note">Standalone route</div>
         <div className="latex-topbar-actions">
           <label className="latex-select-label">
             Main
@@ -178,10 +180,10 @@ export const LatexEditorRoute = () => {
         <LatexLauncher busy={busy} error={error} projects={bundledProjects} cacheState={cacheState} onOpenProject={openBundledProject} />
       ) : (
         <section className="latex-workbench" aria-label="LaTeX editor workbench">
-          <aside className="latex-file-panel" aria-label="LaTeX file tree">
+          <aside className="latex-file-panel" aria-label="Template files">
             <div className="latex-panel-head">
               <div>
-                <span>Project</span>
+                <span>Template files</span>
                 <strong>{project.displayName}</strong>
               </div>
               {project.readOnly && <span className="readonly-badge"><LockKeyhole />Read-only</span>}
@@ -193,10 +195,10 @@ export const LatexEditorRoute = () => {
             </div>
           </aside>
 
-          <section className="latex-editor-pane" aria-label="LaTeX source editor">
+          <section className="latex-editor-pane" aria-label="Source workspace">
             <div className="latex-editor-tabs">
               <button className="selected"><FileText />{project.activePath || 'No file selected'}</button>
-              <span>{activeFile?.kind === 'text' ? 'Source' : 'Binary asset'}</span>
+              <span>{activeFile?.kind === 'text' ? 'Editable source' : 'Compile asset'}</span>
             </div>
             {activeFile?.kind === 'text' ? (
               <LatexCodeEditor
@@ -214,7 +216,7 @@ export const LatexEditorRoute = () => {
             )}
           </section>
 
-          <aside className="latex-preview-pane" aria-label="LaTeX PDF preview and logs">
+          <aside className="latex-preview-pane" aria-label="PDF output and compiler drawer">
             <div className="latex-preview-paper">
               {latexPdfUrl ? (
                 <div className="latex-pdf-wrap">
@@ -229,7 +231,7 @@ export const LatexEditorRoute = () => {
               ) : (
                 <div className="latex-paper-placeholder">
                   <Braces />
-                  <h2>Ready for browser compile</h2>
+                  <h2>Ready for first compile</h2>
                   <p>Compile runs through BusyTeX with the current in-memory project map. If runtime assets are missing, the logs will show the asset path to configure.</p>
                 </div>
               )}

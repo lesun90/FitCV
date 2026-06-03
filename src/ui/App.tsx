@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   AlertCircle,
-  ArrowDown,
-  ArrowUp,
   CheckCircle2,
   ChevronLeft,
   ChevronUp,
+  ChevronDown,
   Clock3,
   Copy,
   Download,
@@ -27,35 +26,50 @@ import {
 } from 'lucide-react';
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
 import { runAtsChecks } from '../domain/checks';
-import { clearReviewMarkersForField, createResume, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, starterResume, switchTemplate, touchResume } from '../domain/resume';
-import { analyzeTemplateCompatibility, templates } from '../domain/templates';
-import type { CompileArtifact, FittedCvRecord, LayoutModule, ProfileFieldKey, ProfileHighlightItem, ResumeRecord, SectionKey, TemplateId } from '../domain/types';
+import { clearReviewMarkersForField, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, starterResume, switchTemplate, touchResume } from '../domain/resume';
+import { templates, getTemplate } from '../domain/templates';
+import type {
+  CompileArtifact,
+  CvSubsectionHeading,
+  EntryTypeDefinition,
+  FittedCvRecord,
+  FlexEntry,
+  FlexSection,
+  FlexSubSection,
+  LayoutModule,
+  ProfileFieldKey,
+  ProfileHighlightItem,
+  ResumeRecord,
+  SectionEnvDefinition,
+  TemplateId,
+} from '../domain/types';
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
 import { formatPdfPreviewUrl, renderRichLatexText, LATEX_COLORS } from './latexUtils';
 import { downloadBlob, StatusPill } from './shared';
-import { clampSpaceValue, defaultSpaceValue, getTemplateAdapter, hasTemplateAdapter, MAX_SPACE_VALUE, MIN_SPACE_VALUE } from '../domain/templateAdapters';
+import { clampSpaceValue, defaultSpaceValue, hasTemplateAdapter, MAX_SPACE_VALUE, MIN_SPACE_VALUE } from '../domain/templateAdapters';
 
+// --- Type guards ---
 
-const sectionLabels: Record<SectionKey, string> = {
-  summary: 'Summary',
-  experience: 'Experience',
-  education: 'Education',
-  projects: 'Projects',
-  skills: 'Skills',
-  awards: 'Awards',
-  customSections: 'Custom sections'
-};
+const isHeading = (item: FlexEntry | FlexSubSection | CvSubsectionHeading): item is CvSubsectionHeading =>
+  'kind' in item && (item as CvSubsectionHeading).kind === 'subsection-heading';
+
+const isSubSection = (item: FlexEntry | FlexSubSection | CvSubsectionHeading): item is FlexSubSection =>
+  'environment' in item;
+
+// --- Label helpers ---
 
 const visibleLayoutTemplates = templates.filter((template) => template.id === 'awesome-cv');
 
-const labelForLayoutModule = (module: LayoutModule) => {
+const labelForLayoutModule = (module: LayoutModule, flexSections: FlexSection[]): string => {
   if (module.kind === 'space') return 'Space';
   if (module.kind === 'new-page') return 'New page';
+  if (module.kind === 'flex-section') {
+    return flexSections.find((s) => s.id === module.flexSectionId)?.name || 'Untitled section';
+  }
   const title = typeof module.options?.title === 'string' ? module.options.title.trim() : '';
-  if (title) return title;
-  return sectionLabels[module.section];
+  return title || 'Summary';
 };
 
 const updateLayoutModule = (
@@ -68,13 +82,12 @@ const updateLayoutModule = (
     ...resume,
     templateLayouts: {
       ...resume.templateLayouts,
-      [resume.activeTemplateId]: layout.map((module) => (module.id === moduleId ? recipe(module) : module))
-    }
+      [resume.activeTemplateId]: layout.map((module) => (module.id === moduleId ? recipe(module) : module)),
+    },
   });
 };
 
 type ViewMode = 'dashboard' | 'editor';
-
 
 export const App = () => {
   if (window.location.pathname === '/latexeditor') return <LatexEditorRoute />;
@@ -110,13 +123,7 @@ export const App = () => {
       if (!pref?.seededOnce) {
         const seed = sampleResume();
         await storage.saveResume(seed);
-        await storage.savePreference({
-          schemaVersion: 1,
-          id: 'default',
-          theme: 'light',
-          seededOnce: true,
-          panels: { style: true, preview: true },
-        });
+        await storage.savePreference({ schemaVersion: 1, id: 'default', theme: 'light', seededOnce: true, panels: { style: true, preview: true } });
         setResumes([seed]);
         setActiveId(seed.id);
       }
@@ -145,7 +152,6 @@ export const App = () => {
   };
 
   const checks = useMemo(() => (active ? runAtsChecks(active) : []), [active]);
-  const compatibility = useMemo(() => (active ? analyzeTemplateCompatibility(active, active.activeTemplateId) : undefined), [active]);
   const activeTemplate = active ? templates.find((template) => template.id === active.activeTemplateId) : undefined;
   const pdfUrl = useMemo(() => (
     artifact?.pdfBlob && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(artifact.pdfBlob) : ''
@@ -154,10 +160,7 @@ export const App = () => {
   const warningCount = checks.filter((check) => check.status !== 'pass').length;
   const cleanCompile = artifact?.status === 'clean' && artifact.resumeVersion === active?.version;
 
-  // Takes an optional resume override so we can compile the correct resume
-  // immediately when switching sessions (before React state settles).
   const compile = async (resumeOverride?: ResumeRecord) => {
-    // Cancel any pending debounced auto-compile so only one compile runs at a time.
     clearTimeout(debounceRef.current);
     const target = resumeOverride ?? activeRef.current;
     if (!target) return;
@@ -193,10 +196,6 @@ export const App = () => {
     await storage.saveResume(updated);
   };
 
-  // Auto-compile for structural changes (layout, add/delete): fires immediately
-  // when the version changes and no text field is focused. Text-field edits
-  // are handled separately via onBlur on the editor board so compile only
-  // triggers after the user finishes typing, not on every keystroke.
   useEffect(() => {
     if (!autoCompile || !active || mode !== 'editor') return;
     const el = document.activeElement;
@@ -206,22 +205,9 @@ export const App = () => {
     return () => clearTimeout(debounceRef.current);
   }, [active?.version, autoCompile]);
 
-  const createBlank = () => {
-    void save(starterResume());
-    setMode('editor');
-  };
-
-  const cloneActive = () => {
-    if (!active) return;
-    void save(duplicateResume(active));
-    setMode('editor');
-  };
-
-  const openResume = (resume: ResumeRecord) => {
-    setActiveId(resume.id);
-    setMode('editor');
-    void compile(resume);
-  };
+  const createBlank = () => { void save(starterResume()); setMode('editor'); };
+  const cloneActive = () => { if (!active) return; void save(duplicateResume(active)); setMode('editor'); };
+  const openResume = (resume: ResumeRecord) => { setActiveId(resume.id); setMode('editor'); void compile(resume); };
 
   const deleteResume = async (id: string) => {
     const target = resumes.find((r) => r.id === id);
@@ -229,16 +215,10 @@ export const App = () => {
     await storage.deleteResume(id);
     const remaining = resumes.filter((r) => r.id !== id);
     setResumes(remaining);
-    if (activeId === id) {
-      setActiveId(remaining[0]?.id);
-      if (mode === 'editor') setMode('dashboard');
-    }
+    if (activeId === id) { setActiveId(remaining[0]?.id); if (mode === 'editor') setMode('dashboard'); }
   };
 
-  const deleteActive = async () => {
-    if (!active) return;
-    await deleteResume(active.id);
-  };
+  const deleteActive = async () => { if (!active) return; await deleteResume(active.id); };
 
   const importArchive = async (file: File) => {
     try {
@@ -257,11 +237,7 @@ export const App = () => {
   };
 
   const exportArchive = async () => {
-    const [fittedCvs, jobDescriptions, scoringReports] = await Promise.all([
-      storage.listFittedCvs(),
-      storage.listJobDescriptions(),
-      storage.listScoringReports()
-    ]);
+    const [fittedCvs, jobDescriptions, scoringReports] = await Promise.all([storage.listFittedCvs(), storage.listJobDescriptions(), storage.listScoringReports()]);
     const file = await exportFitcvArchive({ resumes, artifacts: artifact ? [artifact] : [], fittedCvs, jobDescriptions, scoringReports });
     downloadBlob(file, file.name);
   };
@@ -285,90 +261,37 @@ export const App = () => {
   if (mode === 'dashboard' || !active) {
     return (
       <Dashboard
-        resumes={resumes}
-        fittedCvs={fittedCvs}
-        active={active}
-        reviewCount={reviewCount}
-        warningCount={warningCount}
-        busy={busy}
-        error={error}
-        onCreate={createBlank}
-        onDuplicate={cloneActive}
-        onOpen={openResume}
-        onDelete={deleteResume}
-        onImportPdf={importPdf}
-        onImportArchive={importArchive}
-        onExportArchive={exportArchive}
+        resumes={resumes} fittedCvs={fittedCvs} active={active} reviewCount={reviewCount} warningCount={warningCount}
+        busy={busy} error={error} onCreate={createBlank} onDuplicate={cloneActive} onOpen={openResume}
+        onDelete={deleteResume} onImportPdf={importPdf} onImportArchive={importArchive} onExportArchive={exportArchive}
       />
     );
   }
 
   return (
     <EditorWorkspace
-      active={active}
-      activeTemplate={activeTemplate}
-      artifact={artifact}
-      autoCompile={autoCompile}
-      busy={busy}
-      cleanCompile={cleanCompile}
-      error={error}
-      pdfUrl={pdfUrl}
-      reviewCount={reviewCount}
-      unsupported={compatibility?.unsupportedSections ?? []}
-      onBack={() => setMode('dashboard')}
-      onChange={updateActive}
-      onCompile={() => void compile()}
-      onDelete={deleteActive}
-      onDownloadPdf={() => artifact?.pdfBlob && downloadBlob(artifact.pdfBlob, `${active.title}.pdf`)}
+      active={active} activeTemplate={activeTemplate} artifact={artifact} autoCompile={autoCompile}
+      busy={busy} cleanCompile={cleanCompile} error={error} pdfUrl={pdfUrl} reviewCount={reviewCount}
+      onBack={() => setMode('dashboard')} onChange={updateActive} onCompile={() => void compile()}
+      onDelete={deleteActive} onDownloadPdf={() => artifact?.pdfBlob && downloadBlob(artifact.pdfBlob, `${active.title}.pdf`)}
       onToggleAutoCompile={() => setAutoCompile((v) => !v)}
     />
   );
 };
 
-const Dashboard = ({
-  resumes,
-  fittedCvs,
-  active,
-  reviewCount,
-  warningCount,
-  busy,
-  error,
-  onCreate,
-  onDuplicate,
-  onOpen,
-  onDelete,
-  onImportPdf,
-  onImportArchive,
-  onExportArchive
-}: {
-  resumes: ResumeRecord[];
-  fittedCvs: FittedCvRecord[];
-  active?: ResumeRecord;
-  reviewCount: number;
-  warningCount: number;
-  busy: string;
-  error: string;
-  onCreate: () => void;
-  onDuplicate: () => void;
-  onOpen: (resume: ResumeRecord) => void;
-  onDelete: (id: string) => void;
-  onImportPdf: (file: File) => void;
-  onImportArchive: (file: File) => void;
-  onExportArchive: () => void;
+// --- Dashboard ---
+
+const Dashboard = ({ resumes, fittedCvs, active, reviewCount, warningCount, busy, error, onCreate, onDuplicate, onOpen, onDelete, onImportPdf, onImportArchive, onExportArchive }: {
+  resumes: ResumeRecord[]; fittedCvs: FittedCvRecord[]; active?: ResumeRecord; reviewCount: number; warningCount: number;
+  busy: string; error: string; onCreate: () => void; onDuplicate: () => void; onOpen: (resume: ResumeRecord) => void;
+  onDelete: (id: string) => void; onImportPdf: (file: File) => void; onImportArchive: (file: File) => void; onExportArchive: () => void;
 }) => (
   <main className="dashboard-shell">
     <TopChrome label="Resume library">
-      <label className="chrome-button">
-        <Upload />PDF
-        <input type="file" accept="application/pdf" onChange={(event) => event.target.files?.[0] && onImportPdf(event.target.files[0])} />
-      </label>
-      <label className="chrome-button">
-        <FileArchive />Import
-        <input type="file" accept=".fitcv,application/json" onChange={(event) => event.target.files?.[0] && onImportArchive(event.target.files[0])} />
-      </label>
+      <label className="chrome-button"><Upload />PDF<input type="file" accept="application/pdf" onChange={(e) => e.target.files?.[0] && onImportPdf(e.target.files[0])} /></label>
+      <label className="chrome-button"><FileArchive />Import<input type="file" accept=".fitcv,application/json" onChange={(e) => e.target.files?.[0] && onImportArchive(e.target.files[0])} /></label>
       <button className="chrome-button primary" onClick={onCreate}><FilePlus2 />New Resume</button>
     </TopChrome>
-
     <section className="dashboard-page" aria-labelledby="dashboard-heading">
       <div className="dashboard-head">
         <div>
@@ -381,10 +304,8 @@ const Dashboard = ({
           <StatusPill icon={<Eye />} label="Review" value={reviewCount ? `${reviewCount} fields` : 'Clear'} tone={reviewCount ? 'warn' : 'good'} />
         </div>
       </div>
-
       {busy && <div className="notice">{busy}</div>}
       {error && <div className="notice error">{error}</div>}
-
       <div className="dashboard-grid">
         <aside className="dashboard-rail">
           <button className="create-card" onClick={onCreate}>
@@ -392,7 +313,6 @@ const Dashboard = ({
             <strong>Create base resume</strong>
             <span>Start with a clean LaTeX template and edit with live preview.</span>
           </button>
-
           <section className="filter-card" aria-label="Library filters">
             <h2>Library</h2>
             <ul className="filter-list" aria-label="Library summaries">
@@ -402,14 +322,12 @@ const Dashboard = ({
               <FilterItem label="ATS warnings" value={warningCount.toString()} />
             </ul>
           </section>
-
           <section className="filter-card" aria-label="Library actions">
             <h2>Actions</h2>
             <button className="filter-action" onClick={onDuplicate}><Copy />Duplicate active</button>
             <button className="filter-action" onClick={onExportArchive}><Download />Export backup</button>
           </section>
         </aside>
-
         <section className="resume-library" aria-label="Resume groups">
           {resumes.length === 0 ? (
             <div className="empty-library">
@@ -419,14 +337,8 @@ const Dashboard = ({
               <button className="button green" onClick={onCreate}><FilePlus2 />Create resume</button>
             </div>
           ) : resumes.map((resume) => (
-            <ResumeGroup
-              key={resume.id}
-              resume={resume}
-              fittedCvs={fittedCvs.filter((cv) => cv.sourceResumeId === resume.id)}
-              active={resume.id === active?.id}
-              onOpen={() => onOpen(resume)}
-              onDelete={() => onDelete(resume.id)}
-            />
+            <ResumeGroup key={resume.id} resume={resume} fittedCvs={fittedCvs.filter((cv) => cv.sourceResumeId === resume.id)}
+              active={resume.id === active?.id} onOpen={() => onOpen(resume)} onDelete={() => onDelete(resume.id)} />
           ))}
         </section>
       </div>
@@ -434,46 +346,17 @@ const Dashboard = ({
   </main>
 );
 
-const EditorWorkspace = ({
-  active,
-  activeTemplate,
-  artifact,
-  autoCompile,
-  busy,
-  cleanCompile,
-  error,
-  pdfUrl,
-  reviewCount,
-  unsupported,
-  onBack,
-  onChange,
-  onCompile,
-  onDelete,
-  onDownloadPdf,
-  onToggleAutoCompile,
-}: {
-  active: ResumeRecord;
-  activeTemplate?: (typeof templates)[number];
-  artifact?: CompileArtifact;
-  autoCompile: boolean;
-  busy: string;
-  cleanCompile: boolean;
-  error: string;
-  pdfUrl: string;
-  reviewCount: number;
-  unsupported: SectionKey[];
-  onBack: () => void;
-  onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
-  onCompile: () => void;
-  onDelete: () => void;
-  onDownloadPdf: () => void;
-  onToggleAutoCompile: () => void;
+// --- Editor workspace ---
+
+const EditorWorkspace = ({ active, activeTemplate, artifact, autoCompile, busy, cleanCompile, error, pdfUrl, reviewCount, onBack, onChange, onCompile, onDelete, onDownloadPdf, onToggleAutoCompile }: {
+  active: ResumeRecord; activeTemplate?: (typeof templates)[number]; artifact?: CompileArtifact; autoCompile: boolean;
+  busy: string; cleanCompile: boolean; error: string; pdfUrl: string; reviewCount: number;
+  onBack: () => void; onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void; onCompile: () => void; onDelete: () => void;
+  onDownloadPdf: () => void; onToggleAutoCompile: () => void;
 }) => {
-  const [selectedSection, setSelectedSection] = useState<SectionKey>('experience');
   const [selectedModuleId, setSelectedModuleId] = useState<string>();
   const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
-  const selectedModule = activeLayout.find((module) => module.id === selectedModuleId) ?? activeLayout.find((module) => module.kind === 'section' && module.section === selectedSection) ?? activeLayout[0];
-  const editorSection = selectedModule?.kind === 'section' ? selectedModule.section : selectedSection;
+  const selectedModule = activeLayout.find((m) => m.id === selectedModuleId) ?? activeLayout[0];
 
   useEffect(() => {
     if (!visibleLayoutTemplates.some((template) => template.id === active.activeTemplateId)) {
@@ -484,98 +367,56 @@ const EditorWorkspace = ({
   return (
     <main className="editor-shell">
       <header className="magic-chrome">
-        <div className="magic-brand">
-          <strong>FitCV</strong>
-          <span>/</span>
-        </div>
+        <div className="magic-brand"><strong>FitCV</strong><span>/</span></div>
         <button className="ghost-button back-link" onClick={onBack}><ChevronLeft />Dashboard</button>
         <div className="resume-name-field">
-          <input value={active.title} onChange={(event) => onChange((resume) => renameResume(resume, event.target.value))} aria-label="Resume title" />
+          <input value={active.title} onChange={(e) => onChange((resume) => renameResume(resume, e.target.value))} aria-label="Resume title" />
           <Pencil aria-hidden="true" />
         </div>
         <label className="top-layout-select">
           <span>Layout</span>
-          <select
-            aria-label="Layout"
-            value={visibleLayoutTemplates.some((template) => template.id === active.activeTemplateId) ? active.activeTemplateId : 'awesome-cv'}
-            onChange={(event) => onChange((resume) => switchTemplate(resume, event.target.value as TemplateId))}
+          <select aria-label="Layout"
+            value={visibleLayoutTemplates.some((t) => t.id === active.activeTemplateId) ? active.activeTemplateId : 'awesome-cv'}
+            onChange={(e) => onChange((resume) => switchTemplate(resume, e.target.value as TemplateId))}
           >
-            {visibleLayoutTemplates.map((template) => (
-              <option key={template.id} value={template.id}>{template.name}</option>
-            ))}
+            {visibleLayoutTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </label>
-        <span className={cleanCompile ? 'backup-state clean' : 'backup-state'}>
-          {cleanCompile ? <CheckCircle2 /> : <Clock3 />}
-          {cleanCompile ? 'PDF ready' : 'Not backed up'}
-        </span>
-        <button
-          className={`chrome-button${autoCompile ? ' selected' : ''}`}
-          onClick={onToggleAutoCompile}
-          aria-label={autoCompile ? 'Disable auto-compile' : 'Enable auto-compile'}
-          title={autoCompile ? 'Auto-compile on (click to disable)' : 'Auto-compile off (click to enable)'}
-        >
-          <Zap />Auto
-        </button>
-        <button className="chrome-button" onClick={onCompile} disabled={!!busy}><RotateCw />Compile</button>
-        <button className="chrome-button primary" disabled={!artifact?.pdfBlob || artifact.status !== 'clean'} onClick={onDownloadPdf}><Download />Export</button>
-        <button className="ghost-button danger" onClick={onDelete}><Trash2 />Delete</button>
+        <div className="chrome-end-actions">
+          <span className={cleanCompile ? 'backup-state clean' : 'backup-state'}>
+            {cleanCompile ? <CheckCircle2 /> : <Clock3 />}{cleanCompile ? 'PDF ready' : 'Not backed up'}
+          </span>
+          <div className="chrome-action-group">
+            <button className={`chrome-button${autoCompile ? ' selected' : ''}`} onClick={onToggleAutoCompile} title={autoCompile ? 'Auto-compile on' : 'Auto-compile off'}><Zap />Auto</button>
+            <button className="chrome-button" onClick={onCompile} disabled={!!busy}><RotateCw />Compile</button>
+            <button className="chrome-button primary" disabled={!artifact?.pdfBlob || artifact.status !== 'clean'} onClick={onDownloadPdf}><Download />Export</button>
+          </div>
+          <button className="ghost-button danger" onClick={onDelete}><Trash2 /></button>
+        </div>
       </header>
-
       {error && <div className="notice editor-notice">{error}</div>}
-
-      <section
-        className="editor-board"
-        aria-label="Editor workbench"
+      <section className="editor-board" aria-label="Editor workbench"
         onBlur={(e) => {
           if (!autoCompile) return;
           const { target } = e;
-          if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-            void onCompile();
-          }
+          if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) void onCompile();
         }}
       >
-        <StylePanel
-          active={active}
-          onChange={onChange}
-          unsupported={unsupported}
-          selectedModule={selectedModule}
-          selectedSection={editorSection}
-          onSelectModule={(module) => {
-            setSelectedModuleId(module.id);
-            if (module.kind === 'section') setSelectedSection(module.section);
-          }}
-          onSelectSection={(section) => {
-            setSelectedSection(section);
-            setSelectedModuleId(undefined);
-          }}
-        />
-        <EditorPanel
-          active={active}
-          onChange={onChange}
-          reviewCount={reviewCount}
-          selectedModule={selectedModule}
-          selectedSection={editorSection}
-        />
-        <PreviewPanel
-          activeTemplateName={activeTemplate?.name ?? active.activeTemplateId}
-          artifact={artifact}
-          busy={busy}
-          cleanCompile={cleanCompile}
-          pdfUrl={pdfUrl}
-        />
+        <StylePanel active={active} onChange={onChange} selectedModule={selectedModule}
+          onSelectModule={(module) => setSelectedModuleId(module.id)} />
+        <EditorPanel active={active} onChange={onChange} reviewCount={reviewCount} selectedModule={selectedModule} />
+        <PreviewPanel activeTemplateName={activeTemplate?.name ?? active.activeTemplateId} artifact={artifact} busy={busy} cleanCompile={cleanCompile} pdfUrl={pdfUrl} />
       </section>
     </main>
   );
 };
 
+// --- Common chrome ---
+
 const TopChrome = ({ label, children }: { label: string; children: ReactNode }) => (
   <header className="top-chrome">
     <div className="top-chrome-inner">
-      <div className="brand">
-        <span className="brand-mark">CV</span>
-        <strong>FitCV</strong>
-      </div>
+      <div className="brand"><span className="brand-mark">CV</span><strong>FitCV</strong></div>
       <span className="chrome-divider" />
       <span className="chrome-label">{label}</span>
       <div className="chrome-actions">{children}</div>
@@ -584,16 +425,16 @@ const TopChrome = ({ label, children }: { label: string; children: ReactNode }) 
 );
 
 const FilterItem = ({ active = false, label, value }: { active?: boolean; label: string; value: string }) => (
-  <li className={active ? 'filter-item active' : 'filter-item'}>
-    <span>{label}</span>
-    <strong>{value}</strong>
-  </li>
+  <li className={active ? 'filter-item active' : 'filter-item'}><span>{label}</span><strong>{value}</strong></li>
 );
+
+// --- Resume group card ---
 
 const ResumeGroup = ({ resume, fittedCvs, active, onOpen, onDelete }: { resume: ResumeRecord; fittedCvs: FittedCvRecord[]; active: boolean; onOpen: () => void; onDelete: () => void }) => {
   const template = templates.find((item) => item.id === resume.activeTemplateId);
   const checks = runAtsChecks(resume);
   const warnings = checks.filter((check) => check.status !== 'pass').length;
+  const sectionCount = resume.content.flexSections.length;
 
   return (
     <article className={active ? 'base-group active' : 'base-group'}>
@@ -607,8 +448,7 @@ const ResumeGroup = ({ resume, fittedCvs, active, onOpen, onDelete }: { resume: 
           </div>
           <div className="meta">
             <span>Updated {formatRelative(resume.updatedAt)}</span>
-            <span>{resume.content.experience.length} roles</span>
-            <span>{resume.content.skills.length} skills</span>
+            <span>{sectionCount} section{sectionCount !== 1 ? 's' : ''}</span>
             <span>{warnings ? `${warnings} ATS warnings` : 'ATS clear'}</span>
           </div>
           <p className="summary">{resume.content.summary || 'No summary yet. Open the editor to add a focused positioning statement.'}</p>
@@ -618,20 +458,10 @@ const ResumeGroup = ({ resume, fittedCvs, active, onOpen, onDelete }: { resume: 
           </div>
         </div>
       </div>
-
       <div className="fit-strip">
-        <div className="strip-head">
-          <h3>Fitted CVs</h3>
-          <p>Job-specific versions of this resume</p>
-        </div>
+        <div className="strip-head"><h3>Fitted CVs</h3><p>Job-specific versions of this resume</p></div>
         <div className="fit-grid">
-          {fittedCvs.length > 0 ? (
-            fittedCvs.map((cv) => (
-              <FittedCvCard key={cv.id} fittedCv={cv} />
-            ))
-          ) : (
-            <FitCardCta />
-          )}
+          {fittedCvs.length > 0 ? fittedCvs.map((cv) => <FittedCvCard key={cv.id} fittedCv={cv} />) : <FitCardCta />}
         </div>
       </div>
     </article>
@@ -642,10 +472,7 @@ const FittedCvCard = ({ fittedCv }: { fittedCv: FittedCvRecord }) => (
   <article className="fit-card">
     <div className="fit-top">
       <div className="doc-mini"><span /><span /><span /><span /></div>
-      <div className="fit-title">
-        <div className="company">Fitted CV</div>
-        <div className="role">{fittedCv.title}</div>
-      </div>
+      <div className="fit-title"><div className="company">Fitted CV</div><div className="role">{fittedCv.title}</div></div>
     </div>
     <div className="fit-footer">
       <span className="score high">{fittedCv.acceptedChangeIds.length} changes</span>
@@ -658,136 +485,79 @@ const FitCardCta = () => (
   <article className="fit-card fit-card-cta">
     <div className="fit-top">
       <div className="doc-mini"><span /><span /><span /><span /></div>
-      <div className="fit-title">
-        <div className="company">No fitted CVs yet</div>
-        <div className="role">Fit to a job description to create a tailored version here</div>
-      </div>
+      <div className="fit-title"><div className="company">No fitted CVs yet</div><div className="role">Fit to a job description to create a tailored version here</div></div>
     </div>
   </article>
 );
 
+// --- Style panel (layout editor) ---
 
-const StylePanel = ({
-  active,
-  onChange,
-  unsupported,
-  selectedModule,
-  selectedSection,
-  onSelectModule,
-  onSelectSection
-}: {
+const StylePanel = ({ active, onChange, selectedModule, onSelectModule }: {
   active: ResumeRecord;
-  onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
-  unsupported: SectionKey[];
+  onChange: (recipe: (r: ResumeRecord) => ResumeRecord) => void;
   selectedModule?: LayoutModule;
-  selectedSection: SectionKey;
   onSelectModule: (module: LayoutModule) => void;
-  onSelectSection: (section: SectionKey) => void;
 }) => {
-  const usesLayoutModules = hasTemplateAdapter(active.activeTemplateId);
   const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
-  const activeAdapter = getTemplateAdapter(active.activeTemplateId);
+  const template = getTemplate(active.activeTemplateId);
+  const pinnedSections = template.pinnedSections ?? [];
+  const usesLayoutModules = hasTemplateAdapter(active.activeTemplateId);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [pointerY, setPointerY] = useState<number>(0);
   const [showAddModule, setShowAddModule] = useState(false);
-  const [editingModuleId, setEditingModuleId] = useState<string>();
   const listRef = useRef<HTMLDivElement>(null);
   const rowHeights = useRef<number[]>([]);
   const rowTops = useRef<number[]>([]);
   const grabOffset = useRef<number>(0);
 
-  const reorder = (from: SectionKey, to: SectionKey) => {
-    onChange((resume) => {
-      const order = [...resume.sectionOrder];
-      const fi = order.indexOf(from);
-      const ti = order.indexOf(to);
-      if (fi === -1 || ti === -1) return resume;
-      order.splice(fi, 1);
-      order.splice(ti, 0, from);
-      return touchResume({ ...resume, sectionOrder: order });
-    });
-  };
+  const isPinned = (module: LayoutModule): boolean =>
+    module.kind === 'section' && pinnedSections.includes(module.section);
 
-  const removeModule = (moduleId: string) => {
-    onChange((resume) => {
-      const layout = (resume.templateLayouts[resume.activeTemplateId] ?? []).filter((m) => m.id !== moduleId);
-      return touchResume({ ...resume, templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: layout } });
+  const removeModule = (module: LayoutModule) => {
+    onChange((r) => {
+      const layout = (r.templateLayouts[r.activeTemplateId] ?? []).filter((m) => m.id !== module.id);
+      const flexSections = module.kind === 'flex-section'
+        ? r.content.flexSections.filter((s) => s.id !== module.flexSectionId)
+        : r.content.flexSections;
+      return touchResume({ ...r, content: { ...r.content, flexSections }, templateLayouts: { ...r.templateLayouts, [r.activeTemplateId]: layout } });
     });
-  };
-
-  const renameSectionModule = (moduleId: string, title: string) => {
-    onChange((resume) => updateLayoutModule(resume, moduleId, (module) => {
-      if (module.kind !== 'section') return module;
-      return {
-        ...module,
-        options: {
-          ...(module.options ?? {}),
-          title
-        }
-      };
-    }));
   };
 
   const addLayoutControlModule = (kind: 'space' | 'new-page') => {
     const newModule: LayoutModule = kind === 'space'
       ? { id: createId('module-space'), kind: 'space', enabled: true, value: defaultSpaceValue }
       : { id: createId('module-new-page'), kind: 'new-page', enabled: true };
-    onChange((resume) => {
-      const layout = [...(resume.templateLayouts[resume.activeTemplateId] ?? [])];
-      return touchResume({ ...resume, templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: [...layout, newModule] } });
+    onChange((r) => {
+      const layout = [...(r.templateLayouts[r.activeTemplateId] ?? [])];
+      return touchResume({ ...r, templateLayouts: { ...r.templateLayouts, [r.activeTemplateId]: [...layout, newModule] } });
     });
     onSelectModule(newModule);
     setShowAddModule(false);
   };
 
-  const addSectionModule = (sectionType: NonNullable<typeof activeAdapter>['sectionTypes'][number]) => {
-    const customSectionId = sectionType.section === 'customSections' ? createId('custom') : undefined;
-    const newModule: LayoutModule = {
-      id: createId(`module-${sectionType.section}`),
-      kind: 'section',
-      section: sectionType.section,
-      sectionType: sectionType.id,
-      enabled: true,
-      ...(customSectionId ? { options: { customSectionId } } : {})
-    };
-    onChange((resume) => {
-      const layout = [...(resume.templateLayouts[resume.activeTemplateId] ?? [])];
-      const content = customSectionId
-        ? { ...resume.content, customSections: [...resume.content.customSections, { id: customSectionId, title: '', body: '' }] }
-        : resume.content;
-      return touchResume({
-        ...resume,
-        content,
-        templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: [...layout, newModule] }
-      });
+  const addFlexSection = () => {
+    const sectionId = createId('section');
+    const newSection: FlexSection = { id: sectionId, name: 'NEW SECTION', items: [] };
+    const newModule: LayoutModule = { id: createId('module-flex'), kind: 'flex-section', flexSectionId: sectionId, enabled: true };
+    onChange((r) => {
+      const layout = [...(r.templateLayouts[r.activeTemplateId] ?? [])];
+      return touchResume({ ...r, content: { ...r.content, flexSections: [...r.content.flexSections, newSection] }, templateLayouts: { ...r.templateLayouts, [r.activeTemplateId]: [...layout, newModule] } });
     });
     onSelectModule(newModule);
     setShowAddModule(false);
   };
 
   const reorderModule = (fromId: string, toId: string) => {
-    onChange((resume) => {
-      const layout = [...(resume.templateLayouts[resume.activeTemplateId] ?? [])];
-      const fi = layout.findIndex((module) => module.id === fromId);
-      const ti = layout.findIndex((module) => module.id === toId);
-      if (fi === -1 || ti === -1) return resume;
+    onChange((r) => {
+      const layout = [...(r.templateLayouts[r.activeTemplateId] ?? [])];
+      const fi = layout.findIndex((m) => m.id === fromId);
+      const ti = layout.findIndex((m) => m.id === toId);
+      if (fi === -1 || ti === -1) return r;
       const [moved] = layout.splice(fi, 1);
       layout.splice(ti, 0, moved);
-      return touchResume({ ...resume, templateLayouts: { ...resume.templateLayouts, [resume.activeTemplateId]: layout } });
+      return touchResume({ ...r, templateLayouts: { ...r.templateLayouts, [r.activeTemplateId]: layout } });
     });
-  };
-
-  const moveModule = (index: number, direction: -1 | 1) => {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= activeLayout.length) return;
-    reorderModule(activeLayout[index].id, activeLayout[nextIndex].id);
-  };
-
-  const moveSection = (index: number, direction: -1 | 1) => {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= active.sectionOrder.length) return;
-    reorder(active.sectionOrder[index], active.sectionOrder[nextIndex]);
   };
 
   const handleGripPointerDown = (e: React.PointerEvent, index: number) => {
@@ -806,24 +576,17 @@ const StylePanel = ({
   const handleListPointerMove = (e: React.PointerEvent) => {
     if (dragIndex === null) return;
     setPointerY(e.clientY);
-    const n = usesLayoutModules ? activeLayout.length : active.sectionOrder.length;
+    const n = usesLayoutModules ? activeLayout.length : 1;
     let newOver = n - 1;
     for (let i = 0; i < n; i++) {
-      if (rowTops.current[i] + rowHeights.current[i] / 2 > e.clientY) {
-        newOver = i;
-        break;
-      }
+      if (rowTops.current[i] + rowHeights.current[i] / 2 > e.clientY) { newOver = i; break; }
     }
     if (newOver !== overIndex) setOverIndex(newOver);
   };
 
   const handleListPointerUp = () => {
     if (dragIndex !== null && overIndex !== null && dragIndex !== overIndex) {
-      if (usesLayoutModules) {
-        reorderModule(activeLayout[dragIndex].id, activeLayout[overIndex].id);
-      } else {
-        reorder(active.sectionOrder[dragIndex], active.sectionOrder[overIndex]);
-      }
+      if (usesLayoutModules) reorderModule(activeLayout[dragIndex].id, activeLayout[overIndex].id);
     }
     setDragIndex(null);
     setOverIndex(null);
@@ -833,22 +596,12 @@ const StylePanel = ({
     if (dragIndex === null || overIndex === null) return {};
     if (index === dragIndex) {
       const dy = pointerY - grabOffset.current - rowTops.current[index];
-      return {
-        transform: `translateY(${dy}px) scale(1.02)`,
-        transition: 'box-shadow 150ms ease',
-        position: 'relative',
-        zIndex: 100,
-        boxShadow: '0 8px 24px rgba(27,27,24,0.14)',
-      };
+      return { transform: `translateY(${dy}px) scale(1.02)`, transition: 'box-shadow 150ms ease', position: 'relative', zIndex: 100, boxShadow: '0 8px 24px rgba(27,27,24,0.14)' };
     }
     const gap = 8;
     const h = (rowHeights.current[dragIndex] ?? 42) + gap;
-    if (dragIndex < overIndex && index > dragIndex && index <= overIndex) {
-      return { transform: `translateY(-${h}px)` };
-    }
-    if (dragIndex > overIndex && index >= overIndex && index < dragIndex) {
-      return { transform: `translateY(${h}px)` };
-    }
+    if (dragIndex < overIndex && index > dragIndex && index <= overIndex) return { transform: `translateY(-${h}px)` };
+    if (dragIndex > overIndex && index >= overIndex && index < dragIndex) return { transform: `translateY(${h}px)` };
     return {};
   };
 
@@ -864,369 +617,192 @@ const StylePanel = ({
           onPointerCancel={handleListPointerUp}
         >
           {usesLayoutModules ? activeLayout.map((module, index) => {
-            const label = labelForLayoutModule(module);
+            const label = labelForLayoutModule(module, active.content.flexSections);
+            const locked = isPinned(module);
             const isHidden = !module.enabled;
             return (
               <div
                 key={module.id}
                 style={getItemStyle(index)}
-                className={[
-                  'module-row',
-                  module.id === selectedModule?.id ? 'selected' : '',
-                  isHidden ? 'hidden' : '',
-                  dragIndex === index ? 'dragging' : '',
-                ].filter(Boolean).join(' ')}
+                className={['module-row', module.id === selectedModule?.id ? 'selected' : '', isHidden ? 'hidden' : '', dragIndex === index ? 'dragging' : '', locked ? 'pinned' : ''].filter(Boolean).join(' ')}
               >
-                <GripVertical
-                  aria-hidden="true"
-                  onPointerDown={(e) => handleGripPointerDown(e, index)}
-                />
-                {module.kind === 'section' && editingModuleId === module.id ? (
-                  <input
-                    aria-label={`Section name for ${label}`}
-                    className="module-name-input"
-                    value={label}
-                    onChange={(e) => renameSectionModule(module.id, e.target.value)}
-                    onBlur={() => setEditingModuleId(undefined)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === 'Escape') {
-                        e.currentTarget.blur();
-                      }
-                    }}
-                    autoFocus
-                  />
+                {locked ? (
+                  <span className="grip-placeholder" aria-hidden="true" />
                 ) : (
-                  <button className="module-select-btn" onClick={() => onSelectModule(module)}>
-                    {label}
+                  <GripVertical aria-hidden="true" onPointerDown={(e) => handleGripPointerDown(e, index)} />
+                )}
+                <button className="module-select-btn" onClick={() => onSelectModule(module)}>{label}</button>
+                {!locked && (
+                  <button className="visibility-toggle"
+                    onClick={() => onChange((r) => updateLayoutModule(r, module.id, (item) => ({ ...item, enabled: !item.enabled })))}
+                    aria-label={`${module.enabled ? 'Disable' : 'Enable'} ${label}`}
+                  >
+                    {module.enabled ? <Eye /> : <EyeOff />}
                   </button>
                 )}
-                <div className="reorder-controls" aria-label={`Reorder ${label}`}>
-                  <button
-                    className="reorder-button"
-                    disabled={index === 0}
-                    onClick={() => moveModule(index, -1)}
-                    aria-label={`Move ${label} up`}
-                    title={`Move ${label} up`}
-                  >
-                    <ArrowUp />
-                  </button>
-                  <button
-                    className="reorder-button"
-                    disabled={index === activeLayout.length - 1}
-                    onClick={() => moveModule(index, 1)}
-                    aria-label={`Move ${label} down`}
-                    title={`Move ${label} down`}
-                  >
-                    <ArrowDown />
-                  </button>
-                </div>
-                {module.kind === 'section' && (
-                  <button
-                    className="visibility-toggle"
-                    onClick={() => setEditingModuleId(module.id)}
-                    aria-label={`Edit ${label}`}
-                  >
-                    <Pencil />
-                  </button>
+                {!locked && (
+                  <button className="visibility-toggle" onClick={() => removeModule(module)} aria-label={`Remove ${label}`}><Trash2 /></button>
                 )}
-                <button
-                  className="visibility-toggle"
-                  onClick={() =>
-                    onChange((resume) => updateLayoutModule(resume, module.id, (item) => ({ ...item, enabled: !item.enabled })))
-                  }
-                  aria-label={`${module.enabled ? 'Disable' : 'Enable'} ${label}`}
-                >
-                  {module.enabled ? <Eye /> : <EyeOff />}
-                </button>
-                <button
-                  className="visibility-toggle"
-                  onClick={() => removeModule(module.id)}
-                  aria-label={`Remove ${label}`}
-                >
-                  <Trash2 />
-                </button>
               </div>
             );
-          }) : active.sectionOrder.map((section, index) => {
-            const isHidden = active.hiddenSections.includes(section);
-            return (
-              <div
-                key={section}
-                style={getItemStyle(index)}
-                className={[
-                  'module-row',
-                  section === selectedSection ? 'selected' : '',
-                  isHidden ? 'hidden' : '',
-                  dragIndex === index ? 'dragging' : '',
-                ].filter(Boolean).join(' ')}
-              >
-                <GripVertical
-                  aria-hidden="true"
-                  onPointerDown={(e) => handleGripPointerDown(e, index)}
-                />
-                <button className="module-select-btn" onClick={() => onSelectSection(section)}>
-                  {sectionLabels[section]}
-                </button>
-                <div className="reorder-controls" aria-label={`Reorder ${sectionLabels[section]}`}>
-                  <button
-                    className="reorder-button"
-                    disabled={index === 0}
-                    onClick={() => moveSection(index, -1)}
-                    aria-label={`Move ${sectionLabels[section]} up`}
-                    title={`Move ${sectionLabels[section]} up`}
-                  >
-                    <ArrowUp />
-                  </button>
-                  <button
-                    className="reorder-button"
-                    disabled={index === active.sectionOrder.length - 1}
-                    onClick={() => moveSection(index, 1)}
-                    aria-label={`Move ${sectionLabels[section]} down`}
-                    title={`Move ${sectionLabels[section]} down`}
-                  >
-                    <ArrowDown />
-                  </button>
-                </div>
-                <button
-                  className="visibility-toggle"
-                  onClick={() =>
-                    onChange((resume) => {
-                      const hidden = new Set(resume.hiddenSections);
-                      hidden.has(section) ? hidden.delete(section) : hidden.add(section);
-                      return touchResume({ ...resume, hiddenSections: [...hidden] });
-                    })
-                  }
-                  aria-label={`${isHidden ? 'Show' : 'Hide'} ${sectionLabels[section]}`}
-                >
-                  {isHidden ? <EyeOff /> : <Eye />}
-                </button>
-              </div>
-            );
-          })}
+          }) : (
+            <div className="module-row selected">
+              <button className="module-select-btn">Summary</button>
+            </div>
+          )}
           {showAddModule ? (
-            <div className="add-module-picker">
-              <div className="add-module-group">
-                <span>Sections</span>
-                {activeAdapter?.sectionTypes.map((sectionType) => (
-                  <button
-                    className="add-module-option"
-                    key={sectionType.id}
-                    onClick={() => addSectionModule(sectionType)}
-                  >
-                    <Plus />{sectionType.label}
-                  </button>
-                ))}
-              </div>
-              <div className="add-module-group">
-                <span>Layout controls</span>
-                <button className="add-module-option" onClick={() => addLayoutControlModule('space')}><Plus />Space</button>
-                <button className="add-module-option" onClick={() => addLayoutControlModule('new-page')}><Plus />New page</button>
-              </div>
+            <div className="add-module-picker" role="menu" aria-label="Add module options">
+              <button className="add-module-option" role="menuitem" onClick={addFlexSection}><Plus />New section</button>
+              <button className="add-module-option" role="menuitem" onClick={() => addLayoutControlModule('space')}><Plus />Space</button>
+              <button className="add-module-option" role="menuitem" onClick={() => addLayoutControlModule('new-page')}><Plus />New page</button>
               <button className="add-module-cancel" onClick={() => setShowAddModule(false)}>Cancel</button>
             </div>
           ) : (
-            <button className="add-module" onClick={() => setShowAddModule(true)}><Plus />Add Module</button>
+            <button className="add-module" aria-haspopup="menu" aria-expanded={false} onClick={() => setShowAddModule(true)}><Plus />Add module<ChevronDown /></button>
           )}
         </div>
       </div>
-
-      {unsupported.length > 0 && (
-        <p className="unsupported">
-          Not shown in this template: {unsupported.map((s) => sectionLabels[s]).join(', ')}. Data is preserved.
-        </p>
-      )}
     </aside>
   );
 };
 
-const EditorPanel = ({
-  active,
-  onChange,
-  reviewCount,
-  selectedModule,
-  selectedSection
-}: {
+// --- Editor panel ---
+
+const EditorPanel = ({ active, onChange, reviewCount, selectedModule }: {
   active: ResumeRecord;
-  onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
+  onChange: (recipe: (r: ResumeRecord) => ResumeRecord) => void;
   reviewCount: number;
   selectedModule?: LayoutModule;
-  selectedSection: SectionKey;
-}) => (
-  <section className="panel editor" aria-label="Section editor">
-    <div className="editor-subhead">{selectedModule ? labelForLayoutModule(selectedModule) : sectionLabels[selectedSection]}</div>
-    <div className="section-editor" key={selectedModule?.id ?? selectedSection}>
-      {selectedModule && selectedModule.kind !== 'section'
-        ? renderLayoutControlEditor(selectedModule, onChange)
-        : renderSectionEditor(selectedSection, active, onChange)}
-    </div>
-    {reviewCount > 0 && (
-      <div className="review-box">
-        <strong>Needs review</strong>
-        {active.reviewMarkers.filter((marker) => marker.needsReview).map((marker) => (
-          <span key={marker.field}>{marker.field}: {marker.note}</span>
-        ))}
+}) => {
+  const label = selectedModule ? labelForLayoutModule(selectedModule, active.content.flexSections) : 'Summary';
+  const template = getTemplate(active.activeTemplateId);
+  const [editingSectionName, setEditingSectionName] = useState(false);
+
+  useEffect(() => {
+    setEditingSectionName(false);
+  }, [selectedModule?.id]);
+
+  const canRenameSelectedModule = selectedModule?.kind === 'flex-section' || selectedModule?.kind === 'section';
+
+  const renameSelectedModule = (name: string) => {
+    if (!selectedModule) return;
+    if (selectedModule.kind === 'flex-section') {
+      onChange((r) => touchResume({
+        ...r,
+        content: {
+          ...r.content,
+          flexSections: r.content.flexSections.map((s) => s.id === selectedModule.flexSectionId ? { ...s, name } : s),
+        },
+      }));
+      return;
+    }
+    if (selectedModule.kind === 'section') {
+      onChange((r) => updateLayoutModule(r, selectedModule.id, (m) => (
+        m.kind !== 'section' ? m : { ...m, options: { ...(m.options ?? {}), title: name } }
+      )));
+    }
+  };
+
+  const renderEditor = (): ReactNode => {
+    if (!selectedModule || selectedModule.kind === 'section') return <SummaryEditor active={active} onChange={onChange} />;
+    if (selectedModule.kind === 'flex-section') {
+      const section = active.content.flexSections.find((s) => s.id === selectedModule.flexSectionId);
+      if (!section) return <div className="section-card"><p>Section not found.</p></div>;
+      return <FlexSectionEditor section={section} onChange={onChange} sectionEnvs={template.sectionEnvs ?? []} entryTypes={template.entryTypes ?? []} />;
+    }
+    return renderLayoutControlEditor(selectedModule, onChange);
+  };
+
+  return (
+    <section className="panel editor" aria-label="Section editor">
+      <div className="editor-subhead">
+        {editingSectionName ? (
+          <input
+            aria-label="Section name"
+            className="editor-subhead-input"
+            value={label}
+            onChange={(e) => renameSelectedModule(e.target.value)}
+            onBlur={() => setEditingSectionName(false)}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
+            autoFocus
+          />
+        ) : (
+          <span>{label}</span>
+        )}
+        {canRenameSelectedModule && !editingSectionName && (
+          <button className="editor-subhead-edit" onClick={() => setEditingSectionName(true)} aria-label="Edit section name"><Pencil /></button>
+        )}
       </div>
-    )}
-  </section>
-);
+      <div className="section-editor" key={selectedModule?.id ?? 'summary'}>
+        {renderEditor()}
+      </div>
+      {reviewCount > 0 && (
+        <div className="review-box">
+          <strong>Needs review</strong>
+          {active.reviewMarkers.filter((marker) => marker.needsReview).map((marker) => (
+            <span key={marker.field}>{marker.field}: {marker.note}</span>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+};
+
+// --- Layout control editors ---
 
 const renderLayoutControlEditor = (
-  module: Exclude<LayoutModule, { kind: 'section' }>,
-  onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void
+  module: Exclude<LayoutModule, { kind: 'section' | 'flex-section' }>,
+  onChange: (recipe: (r: ResumeRecord) => ResumeRecord) => void
 ) => {
   if (module.kind === 'space') {
     const value = Number.isFinite(module.value) ? module.value : defaultSpaceValue;
     const updateSpaceValue = (rawValue: number) => {
       const nextValue = clampSpaceValue(rawValue);
-      onChange((resume) => updateLayoutModule(resume, module.id, (item) => item.kind === 'space' ? { ...item, value: nextValue } : item));
+      onChange((r) => updateLayoutModule(r, module.id, (item) => item.kind === 'space' ? { ...item, value: nextValue } : item));
     };
     return (
       <div className="section-card">
-        <div className="subhead">
-          <h3>Space</h3>
-          <span className="template-chip">{module.enabled ? 'Enabled' : 'Disabled'}</span>
-        </div>
+        <div className="subhead"><h3>Space</h3><span className="template-chip">{module.enabled ? 'Enabled' : 'Disabled'}</span></div>
         <div className="space-value-control">
           <label className="space-slider-label">
             <span>Space value: {value}pt</span>
-            <input
-              type="range"
-              min={MIN_SPACE_VALUE}
-              max={MAX_SPACE_VALUE}
-              step={1}
-              value={value}
-              onChange={(e) => updateSpaceValue(Number(e.target.value))}
-            />
+            <input type="range" min={MIN_SPACE_VALUE} max={MAX_SPACE_VALUE} step={1} value={value} onChange={(e) => updateSpaceValue(Number(e.target.value))} />
           </label>
           <label className="space-number-field">
             <span>Value</span>
-            <div>
-              <input
-                aria-label="Space value in points"
-                type="number"
-                min={MIN_SPACE_VALUE}
-                max={MAX_SPACE_VALUE}
-                step={1}
-                value={value}
-                onChange={(e) => updateSpaceValue(Number(e.target.value))}
-              />
-              <span>pt</span>
-            </div>
+            <div><input aria-label="Space value in points" type="number" min={MIN_SPACE_VALUE} max={MAX_SPACE_VALUE} step={1} value={value} onChange={(e) => updateSpaceValue(Number(e.target.value))} /><span>pt</span></div>
           </label>
         </div>
       </div>
     );
   }
-
   return (
     <div className="section-card">
-      <div className="subhead">
-        <h3>New page</h3>
-        <span className="template-chip">{module.enabled ? 'Enabled' : 'Disabled'}</span>
-      </div>
+      <div className="subhead"><h3>New page</h3><span className="template-chip">{module.enabled ? 'Enabled' : 'Disabled'}</span></div>
       <div className="segmented">
-        <button
-          className={module.enabled ? 'selected' : ''}
-          onClick={() => onChange((resume) => updateLayoutModule(resume, module.id, (item) => ({ ...item, enabled: true })))}
-        >
-          Enable
-        </button>
-        <button
-          className={!module.enabled ? 'selected' : ''}
-          onClick={() => onChange((resume) => updateLayoutModule(resume, module.id, (item) => ({ ...item, enabled: false })))}
-        >
-          Disable
-        </button>
+        <button className={module.enabled ? 'selected' : ''} onClick={() => onChange((r) => updateLayoutModule(r, module.id, (item) => ({ ...item, enabled: true })))}>Enable</button>
+        <button className={!module.enabled ? 'selected' : ''} onClick={() => onChange((r) => updateLayoutModule(r, module.id, (item) => ({ ...item, enabled: false })))}>Disable</button>
       </div>
     </div>
   );
 };
 
-const renderSectionEditor = (
-  section: SectionKey,
-  active: ResumeRecord,
-  onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void
-): ReactNode => {
-  switch (section) {
-    case 'summary':     return <SummaryEditor active={active} onChange={onChange} />;
-    case 'experience':  return <ExperienceEditor active={active} onChange={onChange} />;
-    case 'education':   return <EducationEditor active={active} onChange={onChange} />;
-    case 'projects':    return <ProjectsEditor active={active} onChange={onChange} />;
-    case 'skills':      return <SkillsEditor active={active} onChange={onChange} />;
-    case 'awards':      return <AwardsEditor active={active} onChange={onChange} />;
-    case 'customSections': return <CustomSectionsEditor active={active} onChange={onChange} />;
-  }
-};
+// --- Summary editor ---
 
-type SectionEditorProps = {
-  active: ResumeRecord;
-  onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void;
-};
-
-const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
+const SummaryEditor = ({ active, onChange }: { active: ResumeRecord; onChange: (recipe: (r: ResumeRecord) => ResumeRecord) => void }) => {
   const profile = active.content.profile;
   const highlights = profileHighlightsForResume(active);
   const hiddenFields = profile.hiddenFields ?? [];
   const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
-  const summaryModule = activeLayout.find((module) => module.kind === 'section' && module.section === 'summary');
-  const usesLayoutModules = hasTemplateAdapter(active.activeTemplateId);
-  const highlightsWillCompile = usesLayoutModules ? summaryModule?.enabled === true : !active.hiddenSections.includes('summary');
-  const visibleHighlightCount = highlightsWillCompile
-    ? highlights.filter((item) => !item.hidden && item.text.trim()).length
-    : 0;
-  const enableSummaryHighlights = () => onChange((resume) => {
-    const layout = resume.templateLayouts[resume.activeTemplateId] ?? [];
-    const existing = layout.find((module) => module.kind === 'section' && module.section === 'summary');
-    if (existing) return updateLayoutModule(resume, existing.id, (module) => ({ ...module, enabled: true }));
+  const summaryModule = activeLayout.find((m) => m.kind === 'section' && m.section === 'summary');
+  const highlightsWillCompile = summaryModule?.enabled === true;
+  const visibleHighlightCount = highlightsWillCompile ? highlights.filter((item) => !item.hidden && item.text.trim()).length : 0;
 
-    const sectionType = getTemplateAdapter(resume.activeTemplateId)?.sectionTypes.find((item) => item.section === 'summary');
-    if (!sectionType) return resume;
-    return touchResume({
-      ...resume,
-      templateLayouts: {
-        ...resume.templateLayouts,
-        [resume.activeTemplateId]: [
-          {
-            id: createId('module-summary'),
-            kind: 'section',
-            section: 'summary',
-            sectionType: sectionType.id,
-            enabled: true
-          },
-          ...layout
-        ]
-      }
-    });
-  });
-  const textField = (
-    field: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>,
-    label: string,
-    value: string,
-    options: { type?: string; parseValue?: (value: string) => string | string[] } = {}
-  ) => (
-    <ProfileTextField
-      field={field}
-      hidden={hiddenFields.includes(field)}
-      label={label}
-      onChange={onChange}
-      value={value}
-      {...options}
-    />
+  const textField = (field: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>, label: string, value: string, options: { type?: string; parseValue?: (v: string) => string | string[] } = {}) => (
+    <ProfileTextField field={field} hidden={hiddenFields.includes(field)} label={label} onChange={onChange} value={value} {...options} />
   );
-  const nestedField = (
-    group: 'stackoverflow' | 'googleScholar',
-    keyName: 'id' | 'name',
-    label: string,
-    value: string
-  ) => (
-    <ProfileNestedTextField
-      group={group}
-      hidden={hiddenFields.includes(group)}
-      keyName={keyName}
-      label={label}
-      onChange={onChange}
-      value={value}
-    />
+  const nestedField = (group: 'stackoverflow' | 'googleScholar', keyName: 'id' | 'name', label: string, value: string) => (
+    <ProfileNestedTextField group={group} hidden={hiddenFields.includes(group)} keyName={keyName} label={label} onChange={onChange} value={value} />
   );
 
   return (
@@ -1255,61 +831,35 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
         {textField('extraInfo', 'Extra info', profile.extraInfo ?? '')}
         {textField('quote', 'Quote', profile.quote ?? '')}
       </div>
-
       <div className="items profile-highlight-list">
         <div className="subhead">
           <div>
             <h3>Profile highlights</h3>
-            <span className="subhead-meta">
-              {visibleHighlightCount} visible on resume
-            </span>
+            <span className="subhead-meta">{visibleHighlightCount} visible on resume</span>
           </div>
-          <button
-            aria-label="Add profile highlight"
-            onClick={() => onChange((r) => updateProfileHighlights(r, [...profileHighlightsForResume(r), { id: createId('highlight'), text: '' }]))}
-          >
+          <button aria-label="Add profile highlight" onClick={() => onChange((r) => updateProfileHighlights(r, [...profileHighlightsForResume(r), { id: createId('highlight'), text: '' }]))}>
             <Plus />Add highlight
           </button>
         </div>
         {!highlightsWillCompile && highlights.length > 0 && (
           <div className="profile-highlight-warning">
-            <div>
-              <strong>Summary disabled</strong>
-              <span>Profile highlights are saved, but they will not compile until the Summary module is enabled.</span>
-            </div>
-            <button className="ghost-button" aria-label="Enable Summary highlights" onClick={enableSummaryHighlights}>
-              <Eye />Enable
-            </button>
+            <div><strong>Summary disabled</strong><span>Profile highlights are saved, but they will not compile until the Summary module is enabled.</span></div>
           </div>
         )}
         {!highlights.length && (
-          <div className="profile-highlight-empty">
-            <strong>No highlights yet</strong>
-            <span>Add short, outcome-focused bullets for the top profile block.</span>
-          </div>
+          <div className="profile-highlight-empty"><strong>No highlights yet</strong><span>Add short, outcome-focused bullets for the top profile block.</span></div>
         )}
         {highlights.map((item, index) => (
           <div className={`highlight-row${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
             <span className="highlight-num" aria-hidden="true">{index + 1}</span>
-            <RichTextArea
-              ariaLabel="Profile highlight item"
-              value={item.text}
-              rows={2}
-              placeholder="Led a 4-person migration that reduced report generation time by 38%."
-              onChange={(v) => onChange((r) => updateProfileHighlight(r, index, { text: v }))}
-            />
-            <button
-              className="ghost-button item-hide"
-              aria-label={item.hidden ? `Show profile highlight ${index + 1}` : `Hide profile highlight ${index + 1}`}
-              onClick={() => onChange((r) => updateProfileHighlight(r, index, { hidden: !item.hidden }))}
-            >
+            <RichTextArea ariaLabel="Profile highlight item" value={item.text} rows={2} placeholder="Led a 4-person migration that reduced report generation time by 38%."
+              onChange={(v) => onChange((r) => updateProfileHighlight(r, index, { text: v }))} />
+            <button className="ghost-button item-hide" aria-label={item.hidden ? `Show profile highlight ${index + 1}` : `Hide profile highlight ${index + 1}`}
+              onClick={() => onChange((r) => updateProfileHighlight(r, index, { hidden: !item.hidden }))}>
               {item.hidden ? <EyeOff /> : <Eye />}
             </button>
-            <button
-              className="ghost-button danger item-delete"
-              aria-label={`Remove profile highlight ${index + 1}`}
-              onClick={() => onChange((r) => updateProfileHighlights(r, profileHighlightsForResume(r).filter((_, i) => i !== index)))}
-            >
+            <button className="ghost-button danger item-delete" aria-label={`Remove profile highlight ${index + 1}`}
+              onClick={() => onChange((r) => updateProfileHighlights(r, profileHighlightsForResume(r).filter((_, i) => i !== index)))}>
               <Trash2 />
             </button>
           </div>
@@ -1319,204 +869,360 @@ const SummaryEditor = ({ active, onChange }: SectionEditorProps) => {
   );
 };
 
-const ExperienceEditor = ({ active, onChange }: SectionEditorProps) => (
-  <div className="section-card items">
-    <div className="subhead">
-      <h3>Experience</h3>
-      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, experience: [...r.content.experience, { id: createId('exp'), company: '', role: '', location: '', startDate: '', endDate: '', highlights: [''] }] } }))}><Plus />Add</button>
+// --- Drag-reorder hook (shared by section and subsection editors) ---
+
+const useDragOrder = (count: number, onReorder: (from: number, to: number) => void) => {
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+  const [pointerY, setPointerY] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const rowHeights = useRef<number[]>([]);
+  const rowTops = useRef<number[]>([]);
+  const grabOffset = useRef(0);
+
+  const onGripDown = (e: React.PointerEvent, index: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!listRef.current) return;
+    const rows = Array.from(listRef.current.children) as HTMLElement[];
+    rowHeights.current = rows.map((r) => r.getBoundingClientRect().height);
+    rowTops.current = rows.map((r) => r.getBoundingClientRect().top);
+    grabOffset.current = e.clientY - rowTops.current[index];
+    listRef.current.setPointerCapture(e.pointerId);
+    setDragIndex(index);
+    setOverIndex(index);
+    setPointerY(e.clientY);
+  };
+
+  const onMove = (e: React.PointerEvent) => {
+    if (dragIndex === null) return;
+    setPointerY(e.clientY);
+    let newOver = count - 1;
+    for (let i = 0; i < count; i++) {
+      if (rowTops.current[i] + rowHeights.current[i] / 2 > e.clientY) { newOver = i; break; }
+    }
+    if (newOver !== overIndex) setOverIndex(newOver);
+  };
+
+  const onUp = () => {
+    if (dragIndex !== null && overIndex !== null && dragIndex !== overIndex) {
+      onReorder(dragIndex, overIndex);
+    }
+    setDragIndex(null);
+    setOverIndex(null);
+  };
+
+  const getStyle = (index: number): React.CSSProperties => {
+    if (dragIndex === null || overIndex === null) return {};
+    if (index === dragIndex) {
+      const dy = pointerY - grabOffset.current - rowTops.current[index];
+      return { transform: `translateY(${dy}px) scale(1.02)`, position: 'relative', zIndex: 100, boxShadow: '0 8px 24px rgba(27,27,24,0.14)', transition: 'box-shadow 150ms ease' };
+    }
+    const gap = 12;
+    const h = (rowHeights.current[dragIndex] ?? 44) + gap;
+    if (dragIndex < overIndex && index > dragIndex && index <= overIndex) return { transform: `translateY(-${h}px)`, transition: 'transform 150ms ease' };
+    if (dragIndex > overIndex && index >= overIndex && index < dragIndex) return { transform: `translateY(${h}px)`, transition: 'transform 150ms ease' };
+    return { transition: 'transform 150ms ease' };
+  };
+
+  return { listRef, dragIndex, onGripDown, onMove, onUp, getStyle };
+};
+
+// --- Flex section editor ---
+
+const FlexSectionEditor = ({ section, onChange, sectionEnvs, entryTypes }: {
+  section: FlexSection;
+  onChange: (recipe: (r: ResumeRecord) => ResumeRecord) => void;
+  sectionEnvs: SectionEnvDefinition[];
+  entryTypes: EntryTypeDefinition[];
+}) => {
+  const [addOpen, setAddOpen] = useState<'subsection' | 'entry' | null>(null);
+
+  const updateSection = (patch: Partial<FlexSection>) =>
+    onChange((r) => touchResume({ ...r, content: { ...r.content, flexSections: r.content.flexSections.map((s) => s.id === section.id ? { ...s, ...patch } : s) } }));
+
+  const addSubSection = (envId: string) => {
+    const newSub: FlexSubSection = { id: createId('sub'), environment: envId, items: [] };
+    updateSection({ items: [...section.items, newSub] });
+    setAddOpen(null);
+  };
+
+  const addDirectEntry = (typeId: string) => {
+    const newEntry: FlexEntry = { id: createId('entry'), type: typeId, fields: {} };
+    updateSection({ items: [...section.items, newEntry] });
+    setAddOpen(null);
+  };
+
+  const updateItem = (index: number, updated: FlexSection['items'][number]) =>
+    updateSection({ items: section.items.map((it, i) => i === index ? updated : it) });
+
+  const removeItem = (index: number) =>
+    updateSection({ items: section.items.filter((_, i) => i !== index) });
+
+  const drag = useDragOrder(section.items.length, (from, to) => {
+    const items = [...section.items];
+    const [moved] = items.splice(from, 1);
+    items.splice(to, 0, moved);
+    updateSection({ items });
+  });
+
+  return (
+    <div className="section-card items">
+      {section.items.length === 0 && addOpen === null && (
+        <div className="empty-section-hint">
+          <strong>This section is empty</strong>
+          <span>{sectionEnvs.length > 0 ? 'Add a sub-section or entry below to get started.' : 'Add an entry below to get started.'}</span>
+        </div>
+      )}
+      <div
+        ref={drag.listRef}
+        className={`drag-list${drag.dragIndex !== null ? ' is-dragging' : ''}`}
+        onPointerMove={drag.onMove}
+        onPointerUp={drag.onUp}
+        onPointerCancel={drag.onUp}
+      >
+        {section.items.map((item, index) => {
+          if (isHeading(item)) {
+            return (
+              <div key={item.id} style={drag.getStyle(index)}>
+                <article className="item-card">
+                  <div className="item-card-head">
+                    <GripVertical className="drag-grip" aria-hidden="true" onPointerDown={(e) => drag.onGripDown(e, index)} />
+                    <strong>— Subsection heading —</strong>
+                    <button className="ghost-button danger item-delete" aria-label="Remove heading" onClick={() => removeItem(index)}><Trash2 /></button>
+                  </div>
+                  <Field label="Heading text">
+                    <input value={item.text} onChange={(e) => updateItem(index, { ...item, text: e.target.value })} />
+                  </Field>
+                </article>
+              </div>
+            );
+          }
+          if (isSubSection(item)) {
+            return (
+              <div key={item.id} style={drag.getStyle(index)}>
+                <FlexSubSectionEditor sub={item} sectionEnvs={sectionEnvs} entryTypes={entryTypes}
+                  onUpdate={(updated) => updateItem(index, updated)} onRemove={() => removeItem(index)}
+                  onGripDown={(e) => drag.onGripDown(e, index)} />
+              </div>
+            );
+          }
+          return (
+            <div key={(item as FlexEntry).id} style={drag.getStyle(index)}>
+              <FlexEntryEditor entry={item as FlexEntry} entryTypes={entryTypes}
+                onUpdate={(updated) => updateItem(index, updated)} onRemove={() => removeItem(index)}
+                onGripDown={(e) => drag.onGripDown(e, index)} />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="section-add-footer">
+        {addOpen === 'subsection' ? (
+          <div className="add-type-picker">
+            <div className="add-type-header">
+              <span>Choose sub-section type</span>
+              <button className="add-type-cancel-btn" onClick={() => setAddOpen(null)} aria-label="Cancel">×</button>
+            </div>
+            <div className="add-type-pills">
+              {sectionEnvs.map((env) => (
+                <button key={env.id} className="add-type-pill" onClick={() => addSubSection(env.id)}>{env.label}</button>
+              ))}
+            </div>
+          </div>
+        ) : addOpen === 'entry' ? (
+          <div className="add-type-picker">
+            <div className="add-type-header">
+              <span>Choose entry type</span>
+              <button className="add-type-cancel-btn" onClick={() => setAddOpen(null)} aria-label="Cancel">×</button>
+            </div>
+            <div className="add-type-pills">
+              {entryTypes.map((et) => (
+                <button key={et.id} className="add-type-pill" onClick={() => addDirectEntry(et.id)}>{et.label}</button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="add-footer-row">
+            {sectionEnvs.length > 0 && (
+              <button className="add-footer-btn" onClick={() => sectionEnvs.length === 1 ? addSubSection(sectionEnvs[0].id) : setAddOpen('subsection')}>
+                <Plus />Sub-section{sectionEnvs.length > 1 && <ChevronDown />}
+              </button>
+            )}
+            {entryTypes.length > 0 && (
+              <button className="add-footer-btn" onClick={() => entryTypes.length === 1 ? addDirectEntry(entryTypes[0].id) : setAddOpen('entry')}>
+                <Plus />Entry{entryTypes.length > 1 && <ChevronDown />}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     </div>
-    {active.content.experience.map((item, index) => (
-      <article className={`item-card${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
-        <div className="item-card-head">
-          <GripVertical aria-hidden="true" />
-          <strong>{item.role || 'Untitled role'}</strong>
-          <button
-            className="ghost-button item-hide"
-            aria-label={item.hidden ? 'Show entry' : 'Hide entry'}
-            onClick={() => onChange((r) => updateExperience(r, index, { hidden: !item.hidden }))}
-          >
-            {item.hidden ? <EyeOff /> : <Eye />}
-          </button>
-          <button
-            className="ghost-button danger item-delete"
-            aria-label="Delete entry"
-            onClick={() => onChange((r) => {
-              const experience = r.content.experience.filter((_, i) => i !== index);
-              return touchResume({ ...r, content: { ...r.content, experience } });
-            })}
-          >
-            <Trash2 />
-          </button>
-        </div>
-        <div className="field-grid two-col">
-          <Field label="Role"><input value={item.role} onChange={(e) => onChange((r) => updateExperience(r, index, { role: e.target.value }))} /></Field>
-          <Field label="Company"><input value={item.company} onChange={(e) => onChange((r) => updateExperience(r, index, { company: e.target.value }))} /></Field>
-          <Field label="Location"><input value={item.location} onChange={(e) => onChange((r) => updateExperience(r, index, { location: e.target.value }))} /></Field>
-          <Field label="Dates"><input value={[item.startDate, item.endDate].filter(Boolean).join(' - ')} onChange={(e) => onChange((r) => updateDates(r, index, e.target.value))} /></Field>
-        </div>
-        <RichTextArea label="Highlights" placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(v) => onChange((r) => updateExperience(r, index, { highlights: v.split('\n') }))} />
-      </article>
-    ))}
-  </div>
-);
+  );
+};
 
-const EducationEditor = ({ active, onChange }: SectionEditorProps) => (
-  <div className="section-card items">
-    <div className="subhead">
-      <h3>Education</h3>
-      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, education: [...r.content.education, { id: createId('edu'), school: '', degree: '', location: '', startDate: '', endDate: '', highlights: [''] }] } }))}><Plus />Add</button>
-    </div>
-    {active.content.education.map((item, index) => (
-      <article className={`item-card${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
-        <div className="item-card-head">
-          <GripVertical aria-hidden="true" />
-          <strong>{item.school || 'Untitled school'}</strong>
-          <button
-            className="ghost-button item-hide"
-            aria-label={item.hidden ? 'Show entry' : 'Hide entry'}
-            onClick={() => onChange((r) => updateEducation(r, index, { hidden: !item.hidden }))}
-          >
-            {item.hidden ? <EyeOff /> : <Eye />}
-          </button>
-          <button
-            className="ghost-button danger item-delete"
-            aria-label="Delete entry"
-            onClick={() => onChange((r) => {
-              const education = r.content.education.filter((_, i) => i !== index);
-              return touchResume({ ...r, content: { ...r.content, education } });
-            })}
-          >
-            <Trash2 />
-          </button>
-        </div>
-        <div className="field-grid two-col">
-          <Field label="School"><input value={item.school} onChange={(e) => onChange((r) => updateEducation(r, index, { school: e.target.value }))} /></Field>
-          <Field label="Degree"><input value={item.degree} onChange={(e) => onChange((r) => updateEducation(r, index, { degree: e.target.value }))} /></Field>
-          <Field label="Location"><input value={item.location} onChange={(e) => onChange((r) => updateEducation(r, index, { location: e.target.value }))} /></Field>
-          <Field label="Dates"><input value={[item.startDate, item.endDate].filter(Boolean).join(' - ')} onChange={(e) => onChange((r) => updateEducationDates(r, index, e.target.value))} /></Field>
-        </div>
-        <RichTextArea label="Highlights" placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(v) => onChange((r) => updateEducation(r, index, { highlights: v.split('\n') }))} />
-      </article>
-    ))}
-  </div>
-);
+// --- Flex sub-section editor ---
 
-const ProjectsEditor = ({ active, onChange }: SectionEditorProps) => (
-  <div className="section-card items">
-    <div className="subhead">
-      <h3>Projects</h3>
-      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, projects: [...r.content.projects, { id: createId('project'), name: '', description: '', highlights: [''], links: [] }] } }))}><Plus />Add</button>
-    </div>
-    {active.content.projects.map((item, index) => (
-      <article className={`item-card${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
-        <div className="item-card-head">
-          <GripVertical aria-hidden="true" />
-          <strong>{item.name || 'Untitled project'}</strong>
-          <button
-            className="ghost-button item-hide"
-            aria-label={item.hidden ? 'Show entry' : 'Hide entry'}
-            onClick={() => onChange((r) => updateProjects(r, index, { hidden: !item.hidden }))}
-          >
-            {item.hidden ? <EyeOff /> : <Eye />}
-          </button>
-          <button
-            className="ghost-button danger item-delete"
-            aria-label="Delete entry"
-            onClick={() => onChange((r) => {
-              const projects = r.content.projects.filter((_, i) => i !== index);
-              return touchResume({ ...r, content: { ...r.content, projects } });
-            })}
-          >
-            <Trash2 />
-          </button>
+const FlexSubSectionEditor = ({ sub, sectionEnvs, entryTypes, onUpdate, onRemove, onGripDown }: {
+  sub: FlexSubSection;
+  sectionEnvs: SectionEnvDefinition[];
+  entryTypes: EntryTypeDefinition[];
+  onUpdate: (sub: FlexSubSection) => void;
+  onRemove: () => void;
+  onGripDown: (e: React.PointerEvent) => void;
+}) => {
+  const envDef = sectionEnvs.find((e) => e.id === sub.environment);
+  const allowedEntryTypes = entryTypes.filter((et) => envDef?.allowedEntryTypeIds.includes(et.id) ?? true);
+  const [addOpen, setAddOpen] = useState(false);
+
+  const addEntry = (typeId: string) => {
+    const newEntry: FlexEntry = { id: createId('entry'), type: typeId, fields: {} };
+    onUpdate({ ...sub, items: [...sub.items, newEntry] });
+    setAddOpen(false);
+  };
+
+  const addHeading = () => {
+    const heading: CvSubsectionHeading = { id: createId('heading'), kind: 'subsection-heading', text: '' };
+    onUpdate({ ...sub, items: [...sub.items, heading] });
+  };
+
+  const updateSubItem = (index: number, updated: FlexSubSection['items'][number]) =>
+    onUpdate({ ...sub, items: sub.items.map((it, i) => i === index ? updated : it) });
+
+  const removeSubItem = (index: number) =>
+    onUpdate({ ...sub, items: sub.items.filter((_, i) => i !== index) });
+
+  const drag = useDragOrder(sub.items.length, (from, to) => {
+    const items = [...sub.items];
+    const [moved] = items.splice(from, 1);
+    items.splice(to, 0, moved);
+    onUpdate({ ...sub, items });
+  });
+
+  return (
+    <article className={`item-card sub-section-card${sub.hidden ? ' item-hidden' : ''}`}>
+      <div className="item-card-head">
+        <GripVertical className="drag-grip" aria-hidden="true" onPointerDown={onGripDown} />
+        <strong>{envDef?.label ?? sub.environment}</strong>
+        <button className="ghost-button item-hide" aria-label={sub.hidden ? 'Show sub-section' : 'Hide sub-section'} onClick={() => onUpdate({ ...sub, hidden: !sub.hidden })}>
+          {sub.hidden ? <EyeOff /> : <Eye />}
+        </button>
+        <button className="ghost-button danger item-delete" aria-label="Remove sub-section" onClick={onRemove}><Trash2 /></button>
+      </div>
+
+      {sub.items.length === 0 && !addOpen && (
+        <div className="empty-section-hint empty-section-hint-sm">
+          <span>No entries yet — add one below.</span>
         </div>
-        <div className="field-grid two-col">
-          <Field label="Name"><input value={item.name} onChange={(e) => onChange((r) => updateProjects(r, index, { name: e.target.value }))} /></Field>
-          <Field label="Links"><input value={item.links.join(', ')} onChange={(e) => onChange((r) => updateProjects(r, index, { links: splitList(e.target.value) }))} /></Field>
-        </div>
-        <RichTextArea label="Description" value={item.description} onChange={(v) => onChange((r) => updateProjects(r, index, { description: v }))} />
-        <RichTextArea label="Highlights" placeholder="One highlight per line" value={item.highlights.join('\n')} onChange={(v) => onChange((r) => updateProjects(r, index, { highlights: v.split('\n') }))} />
-      </article>
-    ))}
-  </div>
-);
+      )}
 
-const SkillsEditor = ({ active, onChange }: SectionEditorProps) => (
-  <div className="section-card">
-    <label className="stacked-field">
-      Skills
-      <textarea
-        placeholder="Comma-separated: React, TypeScript, Node.js"
-        value={active.content.skills.join(', ')}
-        onChange={(e) => onChange((r) => editField(r, 'content.skills', (resume) => ({ ...resume, content: { ...resume.content, skills: splitList(e.target.value) } })))}
-      />
-    </label>
-  </div>
-);
+      <div
+        ref={drag.listRef}
+        className={`drag-list${drag.dragIndex !== null ? ' is-dragging' : ''}`}
+        onPointerMove={drag.onMove}
+        onPointerUp={drag.onUp}
+        onPointerCancel={drag.onUp}
+      >
+        {sub.items.map((item, index) => {
+          if (isHeading(item)) {
+            return (
+              <div key={item.id} style={drag.getStyle(index)}>
+                <article className="item-card">
+                  <div className="item-card-head">
+                    <GripVertical className="drag-grip" aria-hidden="true" onPointerDown={(e) => drag.onGripDown(e, index)} />
+                    <strong>— Heading —</strong>
+                    <button className="ghost-button danger item-delete" aria-label="Remove heading" onClick={() => removeSubItem(index)}><Trash2 /></button>
+                  </div>
+                  <Field label="Heading text">
+                    <input value={item.text} onChange={(e) => updateSubItem(index, { ...item, text: e.target.value })} />
+                  </Field>
+                </article>
+              </div>
+            );
+          }
+          return (
+            <div key={(item as FlexEntry).id} style={drag.getStyle(index)}>
+              <FlexEntryEditor entry={item as FlexEntry} entryTypes={entryTypes}
+                onUpdate={(updated) => updateSubItem(index, updated)} onRemove={() => removeSubItem(index)}
+                onGripDown={(e) => drag.onGripDown(e, index)} />
+            </div>
+          );
+        })}
+      </div>
 
-const AwardsEditor = ({ active, onChange }: SectionEditorProps) => (
-  <div className="section-card">
-    <label className="stacked-field">
-      Awards
-      <textarea
-        placeholder="One award per line"
-        value={active.content.awards.join('\n')}
-        onChange={(e) => onChange((r) => editField(r, 'content.awards', (resume) => ({ ...resume, content: { ...resume.content, awards: e.target.value.split('\n').map((s) => s.trim()).filter(Boolean) } })))}
-      />
-    </label>
-  </div>
-);
+      <div className="section-add-footer subsection-add-footer">
+        {addOpen ? (
+          <div className="add-type-picker">
+            <div className="add-type-header">
+              <span>Choose entry type</span>
+              <button className="add-type-cancel-btn" onClick={() => setAddOpen(false)} aria-label="Cancel">×</button>
+            </div>
+            <div className="add-type-pills">
+              {allowedEntryTypes.map((et) => (
+                <button key={et.id} className="add-type-pill" onClick={() => addEntry(et.id)}>{et.label}</button>
+              ))}
+              {envDef?.allowsSubsectionHeading && (
+                <button className="add-type-pill add-type-pill-secondary" onClick={() => { addHeading(); setAddOpen(false); }}>Heading</button>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="add-footer-row">
+            {allowedEntryTypes.length > 0 && (
+              <button className="add-footer-btn add-footer-btn-sm" onClick={() => allowedEntryTypes.length === 1 ? addEntry(allowedEntryTypes[0].id) : setAddOpen(true)}>
+                <Plus />{allowedEntryTypes.length === 1 ? allowedEntryTypes[0].label : 'Entry'}{allowedEntryTypes.length > 1 && <ChevronDown />}
+              </button>
+            )}
+            {envDef?.allowsSubsectionHeading && (
+              <button className="add-footer-btn add-footer-btn-sm add-footer-btn-ghost" onClick={addHeading}>
+                <Plus />Heading
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+};
 
-const CustomSectionsEditor = ({ active, onChange }: SectionEditorProps) => (
-  <div className="section-card items">
-    <div className="subhead">
-      <h3>Custom sections</h3>
-      <button onClick={() => onChange((r) => touchResume({ ...r, content: { ...r.content, customSections: [...r.content.customSections, { id: createId('custom'), title: '', body: '' }] } }))}><Plus />Add</button>
-    </div>
-    {active.content.customSections.map((item, index) => (
-      <article className={`item-card${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
-        <div className="item-card-head">
-          <GripVertical aria-hidden="true" />
-          <strong>{item.title || 'Untitled section'}</strong>
-          <button
-            className="ghost-button item-hide"
-            aria-label={item.hidden ? 'Show entry' : 'Hide entry'}
-            onClick={() => onChange((r) => updateCustomSections(r, index, { hidden: !item.hidden }))}
-          >
-            {item.hidden ? <EyeOff /> : <Eye />}
-          </button>
-          <button
-            className="ghost-button danger item-delete"
-            aria-label="Delete entry"
-            onClick={() => onChange((r) => {
-              const customSections = r.content.customSections.filter((_, i) => i !== index);
-              return touchResume({ ...r, content: { ...r.content, customSections } });
-            })}
-          >
-            <Trash2 />
-          </button>
-        </div>
-        <Field label="Title"><input value={item.title} onChange={(e) => onChange((r) => updateCustomSections(r, index, { title: e.target.value }))} /></Field>
-        <RichTextArea label="Body" value={item.body} onChange={(v) => onChange((r) => updateCustomSections(r, index, { body: v }))} />
-      </article>
-    ))}
-  </div>
-);
+// --- Flex entry editor (adapter-driven) ---
 
-const RichTextArea = ({
-  label,
-  ariaLabel,
-  value,
-  placeholder,
-  rows = 4,
-  onChange,
-}: {
-  label?: string;
-  ariaLabel?: string;
-  value: string;
-  placeholder?: string;
-  rows?: number;
-  onChange: (value: string) => void;
+const FlexEntryEditor = ({ entry, entryTypes, onUpdate, onRemove, onGripDown }: {
+  entry: FlexEntry;
+  entryTypes: EntryTypeDefinition[];
+  onUpdate: (entry: FlexEntry) => void;
+  onRemove: () => void;
+  onGripDown: (e: React.PointerEvent) => void;
+}) => {
+  const typeDef = entryTypes.find((et) => et.id === entry.type);
+
+  const updateField = (fieldId: string, value: string) =>
+    onUpdate({ ...entry, fields: { ...entry.fields, [fieldId]: value } });
+
+  return (
+    <article className={`item-card${entry.hidden ? ' item-hidden' : ''}`}>
+      <div className="item-card-head">
+        <GripVertical className="drag-grip" aria-hidden="true" onPointerDown={onGripDown} />
+        <strong>{typeDef?.label ?? entry.type}</strong>
+        <button className="ghost-button item-hide" aria-label={entry.hidden ? 'Show entry' : 'Hide entry'} onClick={() => onUpdate({ ...entry, hidden: !entry.hidden })}>
+          {entry.hidden ? <EyeOff /> : <Eye />}
+        </button>
+        <button className="ghost-button danger item-delete" aria-label="Remove entry" onClick={onRemove}><Trash2 /></button>
+      </div>
+      {typeDef?.fields.map((fd) => {
+        const value = String(entry.fields[fd.id] ?? '');
+        return fd.multiline
+          ? <RichTextArea key={fd.id} label={fd.label} value={value} onChange={(v) => updateField(fd.id, v)} />
+          : <Field key={fd.id} label={fd.label}><input value={value} onChange={(e) => updateField(fd.id, e.target.value)} /></Field>;
+      })}
+    </article>
+  );
+};
+
+// --- Shared UI primitives ---
+
+const RichTextArea = ({ label, ariaLabel, value, placeholder, rows = 4, onChange }: {
+  label?: string; ariaLabel?: string; value: string; placeholder?: string; rows?: number; onChange: (value: string) => void;
 }) => {
   const ref = useRef<HTMLTextAreaElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
@@ -1529,9 +1235,7 @@ const RichTextArea = ({
     const next = cur.slice(0, start) + open + selected + close + cur.slice(end);
     onChange(next);
     requestAnimationFrame(() => {
-      const cursor = selected
-        ? start + open.length + selected.length + close.length
-        : start + open.length;
+      const cursor = selected ? start + open.length + selected.length + close.length : start + open.length;
       el.setSelectionRange(cursor, cursor);
       el.focus();
     });
@@ -1539,19 +1243,13 @@ const RichTextArea = ({
 
   const toolbar = (
     <div className="rich-toolbar" role="toolbar" aria-label={label ? `Formatting for ${label}` : 'Text formatting'}>
-      <button type="button" className="rich-btn rich-bold" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textbf{', '}'); }} title="Bold (\\textbf)"><strong>B</strong></button>
-      <button type="button" className="rich-btn rich-italic" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textit{', '}'); }} title="Italic (\\textit)"><em>I</em></button>
-      <button type="button" className="rich-btn rich-underline" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\underline{', '}'); }} title="Underline (\\underline)"><u>U</u></button>
+      <button type="button" className="rich-btn rich-bold" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textbf{', '}'); }} title="Bold"><strong>B</strong></button>
+      <button type="button" className="rich-btn rich-italic" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textit{', '}'); }} title="Italic"><em>I</em></button>
+      <button type="button" className="rich-btn rich-underline" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\underline{', '}'); }} title="Underline"><u>U</u></button>
       <span className="rich-sep" />
       {LATEX_COLORS.map((color) => (
-        <button
-          key={color.name}
-          type="button"
-          className="rich-color-swatch"
-          style={{ background: color.hex }}
-          onMouseDown={(e) => { e.preventDefault(); wrapSelection(`\\textcolor{${color.name}}{`, '}'); }}
-          title={`${color.label} (\\textcolor{${color.name}})`}
-        />
+        <button key={color.name} type="button" className="rich-color-swatch" style={{ background: color.hex }}
+          onMouseDown={(e) => { e.preventDefault(); wrapSelection(`\\textcolor{${color.name}}{`, '}'); }} title={color.label} />
       ))}
     </div>
   );
@@ -1560,20 +1258,10 @@ const RichTextArea = ({
     <div className="rich-wrap">
       {toolbar}
       <div className="rich-text-frame">
-        <pre className="rich-text-highlight" ref={preRef} aria-hidden="true">
-          {renderRichLatexText(value)}
-        </pre>
-        <textarea
-          ref={ref}
-          rows={rows}
-          value={value}
-          placeholder={placeholder}
-          aria-label={ariaLabel}
+        <pre className="rich-text-highlight" ref={preRef} aria-hidden="true">{renderRichLatexText(value)}</pre>
+        <textarea ref={ref} rows={rows} value={value} placeholder={placeholder} aria-label={ariaLabel}
           onChange={(e) => onChange(e.target.value)}
-          onScroll={(e) => {
-            if (preRef.current)
-              preRef.current.style.transform = `translateY(-${e.currentTarget.scrollTop}px)`;
-          }}
+          onScroll={(e) => { if (preRef.current) preRef.current.style.transform = `translateY(-${e.currentTarget.scrollTop}px)`; }}
         />
       </div>
     </div>
@@ -1584,17 +1272,16 @@ const RichTextArea = ({
 };
 
 const Field = ({ label, children }: { label: string; children: ReactNode }) => (
-  <label className="field-row">
-    <span className="field-label">{label}</span>
-    {children}
-  </label>
+  <label className="field-row"><span className="field-label">{label}</span>{children}</label>
 );
+
+type SectionEditorOnChange = (recipe: (r: ResumeRecord) => ResumeRecord) => void;
 
 type ProfileTextFieldProps = {
   field: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>;
   hidden: boolean;
   label: string;
-  onChange: SectionEditorProps['onChange'];
+  onChange: SectionEditorOnChange;
   parseValue?: (value: string) => string | string[];
   type?: string;
   value: string;
@@ -1605,18 +1292,10 @@ const ProfileTextField = ({ field, hidden, label, onChange, parseValue, type = '
   return (
     <div className={`profile-field-row${hidden ? ' profile-field-hidden' : ''}`}>
       <label className="field-label" htmlFor={inputId}>{label}</label>
-      <input
-        id={inputId}
-        type={type}
-        value={value}
-        onChange={(e) => onChange((r) => updateProfileField(r, field, parseValue ? parseValue(e.target.value) : e.target.value))}
-      />
-      <button
-        className="ghost-button item-hide"
-        aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
-        title={hidden ? `Show ${label}` : `Hide ${label}`}
-        onClick={() => onChange((r) => toggleProfileField(r, field))}
-      >
+      <input id={inputId} type={type} value={value}
+        onChange={(e) => onChange((r) => updateProfileField(r, field, parseValue ? parseValue(e.target.value) : e.target.value))} />
+      <button className="ghost-button item-hide" aria-label={hidden ? `Show ${label}` : `Hide ${label}`} title={hidden ? `Show ${label}` : `Hide ${label}`}
+        onClick={() => onChange((r) => toggleProfileField(r, field))}>
         {hidden ? <EyeOff /> : <Eye />}
       </button>
     </div>
@@ -1628,7 +1307,7 @@ type ProfileNestedTextFieldProps = {
   hidden: boolean;
   keyName: 'id' | 'name';
   label: string;
-  onChange: SectionEditorProps['onChange'];
+  onChange: SectionEditorOnChange;
   value: string;
 };
 
@@ -1637,35 +1316,19 @@ const ProfileNestedTextField = ({ group, hidden, keyName, label, onChange, value
   return (
     <div className={`profile-field-row${hidden ? ' profile-field-hidden' : ''}`}>
       <label className="field-label" htmlFor={inputId}>{label}</label>
-      <input
-        id={inputId}
-        value={value}
-        onChange={(e) => onChange((r) => updateNestedProfileField(r, group, keyName, e.target.value))}
-      />
-      <button
-        className="ghost-button item-hide"
-        aria-label={hidden ? `Show ${label}` : `Hide ${label}`}
-        title={hidden ? `Show ${label}` : `Hide ${label}`}
-        onClick={() => onChange((r) => toggleProfileField(r, group))}
-      >
+      <input id={inputId} value={value} onChange={(e) => onChange((r) => updateNestedProfileField(r, group, keyName, e.target.value))} />
+      <button className="ghost-button item-hide" aria-label={hidden ? `Show ${label}` : `Hide ${label}`} title={hidden ? `Show ${label}` : `Hide ${label}`}
+        onClick={() => onChange((r) => toggleProfileField(r, group))}>
         {hidden ? <EyeOff /> : <Eye />}
       </button>
     </div>
   );
 };
 
-const PreviewPanel = ({
-  activeTemplateName,
-  artifact,
-  busy,
-  cleanCompile,
-  pdfUrl,
-}: {
-  activeTemplateName: string;
-  artifact?: CompileArtifact;
-  busy: string;
-  cleanCompile: boolean;
-  pdfUrl: string;
+// --- Preview panel ---
+
+const PreviewPanel = ({ activeTemplateName, artifact, busy, cleanCompile, pdfUrl }: {
+  activeTemplateName: string; artifact?: CompileArtifact; busy: string; cleanCompile: boolean; pdfUrl: string;
 }) => {
   const [showLogs, setShowLogs] = useState(false);
   const formattedUrl = pdfUrl ? formatPdfPreviewUrl(pdfUrl) : '';
@@ -1676,62 +1339,43 @@ const PreviewPanel = ({
         <StatusPill icon={<FileCheck2 />} label="Layout" value={activeTemplateName} />
         <StatusPill icon={cleanCompile ? <CheckCircle2 /> : <Clock3 />} label="PDF" value={cleanCompile ? 'Clean' : artifact?.status ?? 'Stale'} tone={cleanCompile ? 'good' : 'warn'} />
       </div>
-
       {formattedUrl ? (
         <div className="preview-pdf-wrap">
           <iframe title="PDF preview" src={formattedUrl} />
-          {busy && (
-            <div className="latex-recompile-overlay" aria-live="polite">
-              <Loader2 className="latex-spin" aria-hidden="true" />
-              <span>Recompiling…</span>
-            </div>
-          )}
+          {busy && <div className="latex-recompile-overlay" aria-live="polite"><Loader2 className="latex-spin" aria-hidden="true" /><span>Recompiling…</span></div>}
         </div>
       ) : (
         <div className="latex-paper-placeholder">
           <FileCheck2 />
           <h2>{busy ? 'Compiling…' : 'No preview yet'}</h2>
-          {busy ? (
-            <Loader2 className="latex-spin" aria-hidden="true" />
-          ) : (
-            <p>Hit <strong>Compile</strong> or enable <strong>Auto</strong> to generate a live PDF preview.</p>
-          )}
+          {busy ? <Loader2 className="latex-spin" aria-hidden="true" /> : <p>Hit <strong>Compile</strong> or enable <strong>Auto</strong> to generate a live PDF preview.</p>}
         </div>
       )}
-
       <div className={`log-drawer${showLogs ? ' open' : ''}`}>
         <div className="log-drawer-body-wrap" aria-hidden={!showLogs}>
           <div className="log-drawer-body">
             {busy ? (
-              <div className="log-compiling-msg" aria-live="polite">
-                <Loader2 className="latex-spin" aria-hidden="true" />
-                <span>Compiling in browser…</span>
-              </div>
+              <div className="log-compiling-msg" aria-live="polite"><Loader2 className="latex-spin" aria-hidden="true" /><span>Compiling in browser…</span></div>
             ) : (
               <pre>{artifact?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
             )}
           </div>
         </div>
-        <button
-          className="log-drawer-tab"
-          onClick={() => setShowLogs((v) => !v)}
-          aria-expanded={showLogs}
-          aria-label={showLogs ? 'Hide compile logs' : 'Show compile logs'}
-        >
+        <button className="log-drawer-tab" onClick={() => setShowLogs((v) => !v)} aria-expanded={showLogs} aria-label={showLogs ? 'Hide compile logs' : 'Show compile logs'}>
           <Terminal className="log-drawer-tab-icon" aria-hidden="true" />
           <span>Compile Logs</span>
           {busy && <Loader2 className="latex-spin" aria-hidden="true" />}
           {!busy && cleanCompile && <CheckCircle2 className="log-status-icon good" aria-hidden="true" />}
           {!busy && !cleanCompile && artifact && <AlertCircle className="log-status-icon warn" aria-hidden="true" />}
-          <span className="log-status-label">
-            {busy ? 'Compiling…' : cleanCompile ? 'Clean' : artifact ? artifact.status : 'No output'}
-          </span>
+          <span className="log-status-label">{busy ? 'Compiling…' : cleanCompile ? 'Clean' : artifact ? artifact.status : 'No output'}</span>
           <ChevronUp className="log-drawer-chevron" aria-hidden="true" />
         </button>
       </div>
     </aside>
   );
 };
+
+// --- Mini paper ---
 
 const MiniPaper = ({ resume }: { resume: ResumeRecord }) => (
   <div className="mini-preview" aria-hidden="true">
@@ -1742,140 +1386,51 @@ const MiniPaper = ({ resume }: { resume: ResumeRecord }) => (
         <div className="paper-name">{resume.content.profile.fullName || resume.title}</div>
         <div className="paper-role">{resume.content.profile.headline || 'Resume'}</div>
         <div className="paper-rule" />
-        <div className="paper-section">Summary</div>
-        <div className="lines"><span className="line dark" /><span className="line mid" /><span className="line short" /></div>
-        <div className="paper-section">Experience</div>
-        <div className="lines"><span className="line dark short" /><span className="line" /><span className="line mid" /><span className="line tiny" /></div>
-        <div className="paper-section">Skills</div>
-        <div className="lines"><span className="line mid" /><span className="line short" /></div>
+        {resume.content.flexSections.slice(0, 3).map((section) => (
+          <div key={section.id}>
+            <div className="paper-section">{section.name}</div>
+            <div className="lines"><span className="line dark" /><span className="line mid" /><span className="line short" /></div>
+          </div>
+        ))}
       </div>
     )}
   </div>
 );
 
+// --- Helper functions ---
 
-const editField = (resume: ResumeRecord, field: string, update: (resume: ResumeRecord) => ResumeRecord) => {
+const editField = (resume: ResumeRecord, field: string, update: (r: ResumeRecord) => ResumeRecord) => {
   const updated = update(resume);
   const reviewed = clearReviewMarkersForField(updated, field);
   return reviewed === updated ? touchResume(updated) : reviewed;
 };
 
-const updateProfileField = (
-  resume: ResumeRecord,
-  key: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>,
-  value: string | string[]
-) =>
-  editField(resume, `content.profile.${key}`, (next) => ({
-    ...next,
-    content: {
-      ...next.content,
-      profile: {
-        ...next.content.profile,
-        [key]: value
-      }
-    }
-  }));
+const updateProfileField = (resume: ResumeRecord, key: Exclude<ProfileFieldKey, 'stackoverflow' | 'googleScholar'>, value: string | string[]) =>
+  editField(resume, `content.profile.${key}`, (next) => ({ ...next, content: { ...next.content, profile: { ...next.content.profile, [key]: value } } }));
 
-const updateNestedProfileField = (
-  resume: ResumeRecord,
-  group: 'stackoverflow' | 'googleScholar',
-  key: 'id' | 'name',
-  value: string
-) =>
-  editField(resume, `content.profile.${group}.${key}`, (next) => ({
-    ...next,
-    content: {
-      ...next.content,
-      profile: {
-        ...next.content.profile,
-        [group]: {
-          ...next.content.profile[group],
-          [key]: value
-        }
-      }
-    }
-  }));
+const updateNestedProfileField = (resume: ResumeRecord, group: 'stackoverflow' | 'googleScholar', key: 'id' | 'name', value: string) =>
+  editField(resume, `content.profile.${group}.${key}`, (next) => ({ ...next, content: { ...next.content, profile: { ...next.content.profile, [group]: { ...next.content.profile[group], [key]: value } } } }));
 
 const toggleProfileField = (resume: ResumeRecord, field: ProfileFieldKey) => {
   const hiddenFields = new Set(resume.content.profile.hiddenFields ?? []);
   hiddenFields.has(field) ? hiddenFields.delete(field) : hiddenFields.add(field);
-  return editField(resume, `content.profile.${field}`, (next) => ({
-    ...next,
-    content: {
-      ...next.content,
-      profile: {
-        ...next.content.profile,
-        hiddenFields: [...hiddenFields]
-      }
-    }
-  }));
+  return editField(resume, `content.profile.${field}`, (next) => ({ ...next, content: { ...next.content, profile: { ...next.content.profile, hiddenFields: [...hiddenFields] } } }));
 };
 
 const profileHighlightsForResume = (resume: ResumeRecord): ProfileHighlightItem[] => {
   if (resume.content.profileHighlights?.length) return resume.content.profileHighlights;
-  return resume.content.summary
-    .split(/\n+/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((text, index) => ({ id: `summary-highlight-${index}`, text }));
+  return resume.content.summary.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((text, i) => ({ id: `summary-highlight-${i}`, text }));
 };
 
 const updateProfileHighlights = (resume: ResumeRecord, profileHighlights: ProfileHighlightItem[]) =>
-  editField(resume, 'content.profileHighlights', (next) => ({
-    ...next,
-    content: {
-      ...next.content,
-      summary: profileHighlights.map((item) => item.text).filter(Boolean).join('\n'),
-      profileHighlights
-    }
-  }));
+  editField(resume, 'content.profileHighlights', (next) => ({ ...next, content: { ...next.content, summary: profileHighlights.map((item) => item.text).filter(Boolean).join('\n'), profileHighlights } }));
 
-const updateProfileHighlight = (
-  resume: ResumeRecord,
-  index: number,
-  patchValue: Partial<ProfileHighlightItem>
-) => {
-  const profileHighlights = profileHighlightsForResume(resume).map((item, itemIndex) => (
-    itemIndex === index ? { ...item, ...patchValue } : item
-  ));
+const updateProfileHighlight = (resume: ResumeRecord, index: number, patchValue: Partial<ProfileHighlightItem>) => {
+  const profileHighlights = profileHighlightsForResume(resume).map((item, i) => i === index ? { ...item, ...patchValue } : item);
   return updateProfileHighlights(resume, profileHighlights);
 };
 
 const splitList = (value: string) => value.split(',').map((item) => item.trim()).filter(Boolean);
-
-const updateExperience = (resume: ResumeRecord, index: number, patchValue: Partial<ResumeRecord['content']['experience'][number]>) => {
-  const experience = [...resume.content.experience];
-  experience[index] = { ...experience[index], ...patchValue };
-  return editField(resume, 'content.experience', (next) => ({ ...next, content: { ...next.content, experience } }));
-};
-
-const updateDates = (resume: ResumeRecord, index: number, value: string) => {
-  const [startDate = '', endDate = ''] = value.split(' - ');
-  return updateExperience(resume, index, { startDate, endDate });
-};
-
-const updateEducation = (resume: ResumeRecord, index: number, patchValue: Partial<ResumeRecord['content']['education'][number]>) => {
-  const education = [...resume.content.education];
-  education[index] = { ...education[index], ...patchValue };
-  return editField(resume, 'content.education', (next) => ({ ...next, content: { ...next.content, education } }));
-};
-
-const updateEducationDates = (resume: ResumeRecord, index: number, value: string) => {
-  const [startDate = '', endDate = ''] = value.split(' - ');
-  return updateEducation(resume, index, { startDate, endDate });
-};
-
-const updateProjects = (resume: ResumeRecord, index: number, patchValue: Partial<ResumeRecord['content']['projects'][number]>) => {
-  const projects = [...resume.content.projects];
-  projects[index] = { ...projects[index], ...patchValue };
-  return editField(resume, 'content.projects', (next) => ({ ...next, content: { ...next.content, projects } }));
-};
-
-const updateCustomSections = (resume: ResumeRecord, index: number, patchValue: Partial<ResumeRecord['content']['customSections'][number]>) => {
-  const customSections = [...resume.content.customSections];
-  customSections[index] = { ...customSections[index], ...patchValue };
-  return editField(resume, 'content.customSections', (next) => ({ ...next, content: { ...next.content, customSections } }));
-};
 
 const formatRelative = (date: string) => {
   const diff = Date.now() - new Date(date).getTime();

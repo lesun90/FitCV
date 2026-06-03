@@ -1,4 +1,3 @@
-import { analyzeTemplateCompatibility, getTemplate } from './templates';
 import type { ResumeRecord } from './types';
 
 export interface CheckResult {
@@ -13,8 +12,6 @@ export interface CheckResult {
 export const runAtsChecks = (resume: ResumeRecord): CheckResult[] => {
   const checks: CheckResult[] = [];
   const profile = resume.content.profile;
-  const template = getTemplate(resume.activeTemplateId);
-  const compatibility = analyzeTemplateCompatibility(resume, resume.activeTemplateId);
 
   if (!profile.fullName.trim()) {
     checks.push(result('missing-name', 'blocked', 'high', 'content.profile.fullName', 'Name is required for every template.', 'Add your full name in the profile section.'));
@@ -24,9 +21,6 @@ export const runAtsChecks = (resume: ResumeRecord): CheckResult[] => {
   }
   if (resume.content.summary.length > 700) {
     checks.push(result('long-summary', 'warning', 'medium', 'content.summary', 'Summary is unusually long for ATS scanning.', 'Keep the summary to three or four focused lines.'));
-  }
-  if (compatibility.unsupportedSections.length > 0) {
-    checks.push(result('hidden-fields', 'warning', 'medium', 'template', `${template.name} does not show: ${compatibility.unsupportedSections.join(', ')}.`, 'Switch templates or leave those fields preserved for later.'));
   }
   if (profile.links.some((link) => !/^https?:\/\//i.test(link) && !/^[\w.-]+\.[a-z]{2,}/i.test(link))) {
     checks.push(result('unclear-link', 'warning', 'medium', 'content.profile.links', 'One or more links may not be readable when exported.', 'Use a full URL or a recognizable domain.'));

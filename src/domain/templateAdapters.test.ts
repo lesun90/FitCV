@@ -1,6 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { createResume } from './resume';
+import { createResume, sampleResume } from './resume';
 import { getTemplateAdapter, renderAdapterLatexProject } from './templateAdapters';
+import { getTemplate } from './templates';
+import type { FlexEntry, FlexSection, FlexSubSection } from './types';
+import { createId } from './ids';
+
+const makeEntry = (type: string, fields: FlexEntry['fields']): FlexEntry => ({
+  id: createId('entry'),
+  type,
+  fields,
+});
+
+const makeSub = (environment: string, items: FlexEntry[]): FlexSubSection => ({
+  id: createId('sub'),
+  environment,
+  items,
+});
+
+const makeSection = (name: string, items: FlexSection['items']): FlexSection => ({
+  id: createId('section'),
+  name,
+  items,
+});
 
 describe('template adapters', () => {
   it('renders Awesome CV as a complete BusyTeX project', async () => {
@@ -11,18 +32,18 @@ describe('template adapters', () => {
       email: 'ada@example.com',
       phone: '+1 555 0142',
       location: 'London, UK',
-      links: ['github.com/ada']
+      links: ['github.com/ada'],
     };
     resume.content.summary = 'Builds R&D tools with 100% care.';
-    resume.content.skills = ['Systems', 'R&D'];
+    resume.content.profileHighlights = [{ id: 'h1', text: 'Builds R&D tools with 100% care.' }];
 
     const result = await renderAdapterLatexProject(resume);
 
     expect(result.mainFile).toBe('resume.tex');
     expect(result.engine).toBe('xelatex');
-    expect(result.files.some((file) => file.path === 'awesome-cv.cls')).toBe(true);
-    expect(result.files.some((file) => file.path === 'fontawesome.sty')).toBe(true);
-    expect(result.files.some((file) => file.path === 'fonts/Roboto-Regular.ttf')).toBe(true);
+    expect(result.files.some((f) => f.path === 'awesome-cv.cls')).toBe(true);
+    expect(result.files.some((f) => f.path === 'fontawesome.sty')).toBe(true);
+    expect(result.files.some((f) => f.path === 'fonts/Roboto-Regular.ttf')).toBe(true);
     expect(result.latexSource).toContain('\\makecvheader');
     expect(result.latexSource).toContain('Ada');
     expect(result.latexSource).toContain('Lovelace');
@@ -30,14 +51,60 @@ describe('template adapters', () => {
     expect(result.latexSource).toContain('100\\%');
   });
 
+  it('renders a flex section with a sub-section and cventry items', async () => {
+    const resume = createResume('Flex Test', 'awesome-cv');
+    resume.content.profile = { fullName: 'Grace Hopper', email: 'grace@example.com', phone: '', location: '', links: [], headline: '' };
+    const section = makeSection('WORK EXPERIENCE', [
+      makeSub('experience', [
+        makeEntry('cventry', { position: 'Admiral', title: 'US Navy', location: 'Arlington, VA', date: '1944 -- 1986', highlights: 'Built the first compiler\nInvented COBOL' }),
+      ]),
+    ]);
+    resume.content.flexSections = [section];
+    resume.templateLayouts['awesome-cv'] = [
+      { id: 'sum', kind: 'section', section: 'summary', sectionType: 'awesome-highlight', enabled: false },
+      { id: 'flex', kind: 'flex-section', flexSectionId: section.id, enabled: true },
+    ];
+
+    const result = await renderAdapterLatexProject(resume);
+
+    expect(result.latexSource).toContain('\\cvsection{WORK EXPERIENCE}');
+    expect(result.latexSource).toContain('\\begin{experience}');
+    expect(result.latexSource).toContain('\\cventry');
+    expect(result.latexSource).toContain('{Admiral}');
+    expect(result.latexSource).toContain('{US Navy}');
+    expect(result.latexSource).toContain('Built the first compiler');
+    expect(result.latexSource).toContain('\\end{experience}');
+  });
+
+  it('renders a flex section with a cvsubsection heading between two cvhonors groups', async () => {
+    const resume = createResume('Headings Test', 'awesome-cv');
+    resume.content.profile = { fullName: 'Test User', email: 't@t.com', phone: '', location: '', links: [], headline: '' };
+    const heading = { id: createId('h'), kind: 'subsection-heading' as const, text: 'International' };
+    const sub1: FlexSubSection = { id: createId('sub'), environment: 'cvhonors', items: [heading, makeEntry('cvhonor', { award: 'Gold', event: 'ACM', location: 'NYC', date: '2023' })] };
+    const section = makeSection('HONORS', [sub1]);
+    resume.content.flexSections = [section];
+    resume.templateLayouts['awesome-cv'] = [
+      { id: 'flex', kind: 'flex-section', flexSectionId: section.id, enabled: true },
+    ];
+
+    const result = await renderAdapterLatexProject(resume);
+
+    expect(result.latexSource).toContain('\\cvsection{HONORS}');
+    expect(result.latexSource).toContain('\\begin{cvhonors}');
+    expect(result.latexSource).toContain('\\cvsubsection{International}');
+    expect(result.latexSource).toContain('\\cvhonor{Gold}{ACM}{NYC}{2023}');
+    expect(result.latexSource).toContain('\\end{cvhonors}');
+  });
+
   it('renders enabled layout controls and skips disabled ones', async () => {
     const resume = createResume('Layout Controls', 'awesome-cv');
     resume.content.summary = 'Short summary.';
+    resume.content.profileHighlights = [{ id: 'h1', text: 'Short summary.' }];
     resume.templateLayouts['awesome-cv'] = [
       { id: 'summary', kind: 'section', section: 'summary', sectionType: 'awesome-highlight', enabled: true },
       { id: 'space-on', kind: 'space', enabled: true, value: 18 },
       { id: 'page-off', kind: 'new-page', enabled: false },
-      { id: 'page-on', kind: 'new-page', enabled: true }
+      { id: 'page-on', kind: 'new-page', enabled: true },
     ];
 
     const result = await renderAdapterLatexProject(resume);
@@ -49,7 +116,7 @@ describe('template adapters', () => {
   it('normalizes legacy space size labels to point values', async () => {
     const resume = createResume('Legacy Layout Controls', 'awesome-cv');
     resume.templateLayouts['awesome-cv'] = [
-      { id: 'space-on', kind: 'space', enabled: true, size: 'large' } as never
+      { id: 'space-on', kind: 'space', enabled: true, size: 'large' } as never,
     ];
 
     const result = await renderAdapterLatexProject(resume);
@@ -57,103 +124,16 @@ describe('template adapters', () => {
     expect(result.latexSource).toContain('\\vspace{18pt}');
   });
 
-  it('includes custom sections in the Awesome CV default layout with template metadata', () => {
-    const resume = createResume('Custom Layout', 'awesome-cv');
-
+  it('default layout includes a summary module and flex section modules', () => {
+    const resume = sampleResume();
     const adapter = getTemplateAdapter('awesome-cv');
     const layout = adapter?.defaultLayout(resume) ?? [];
 
-    expect(layout.map((module) => module.kind === 'section' ? module.section : module.kind)).toEqual([
-      'summary',
-      'education',
-      'experience',
-      'space',
-      'new-page',
-      'projects',
-      'skills',
-      'awards',
-      'customSections'
-    ]);
-    expect(layout.find((module) => module.kind === 'section' && module.section === 'customSections')).toMatchObject({
-      sectionType: 'awesome-custom'
-    });
-    expect(adapter?.sectionTypes.find((sectionType) => sectionType.section === 'customSections')).toMatchObject({
-      id: 'awesome-custom'
-    });
+    expect(layout[0]).toMatchObject({ kind: 'section', section: 'summary' });
+    expect(layout.some((m) => m.kind === 'flex-section')).toBe(true);
   });
 
-  it('renders visible custom sections in Awesome CV projects', async () => {
-    const resume = createResume('Custom Sections', 'awesome-cv');
-    resume.content.customSections = [
-      { id: 'custom-1', title: 'Publications & Talks', body: 'Spoke about R&D systems at 100% scale.' },
-      { id: 'custom-2', title: 'Hidden Notes', body: 'This should not render.', hidden: true }
-    ];
-    resume.templateLayouts['awesome-cv'] = [
-      { id: 'custom', kind: 'section', section: 'customSections', sectionType: 'awesome-custom', enabled: true }
-    ];
-
-    const result = await renderAdapterLatexProject(resume);
-
-    expect(result.latexSource).toContain('\\cvsection{PUBLICATIONS \\& TALKS}');
-    expect(result.latexSource).toContain('\\item {Spoke about R\\&D systems at 100\\% scale.}');
-    expect(result.latexSource).not.toContain('Hidden Notes');
-    expect(result.latexSource).not.toContain('This should not render.');
-  });
-
-  it('can render a layout module for one custom section', async () => {
-    const resume = createResume('Targeted Custom Sections', 'awesome-cv');
-    resume.content.customSections = [
-      { id: 'custom-1', title: 'Publications', body: 'Published one paper.' },
-      { id: 'custom-2', title: 'Talks', body: 'Gave one talk.' }
-    ];
-    resume.templateLayouts['awesome-cv'] = [
-      {
-        id: 'custom-talks',
-        kind: 'section',
-        section: 'customSections',
-        sectionType: 'awesome-custom',
-        enabled: true,
-        options: { customSectionId: 'custom-2' }
-      }
-    ];
-
-    const result = await renderAdapterLatexProject(resume);
-
-    expect(result.latexSource).toContain('\\cvsection{TALKS}');
-    expect(result.latexSource).toContain('Gave one talk.');
-    expect(result.latexSource).not.toContain('\\cvsection{PUBLICATIONS}');
-    expect(result.latexSource).not.toContain('Published one paper.');
-  });
-
-  it('uses layout module title overrides for Awesome CV section headings', async () => {
-    const resume = createResume('Renamed Sections', 'awesome-cv');
-    resume.content.experience = [{
-      id: 'exp-1',
-      company: 'Analytical Engine Lab',
-      role: 'Systems Analyst',
-      location: 'London',
-      startDate: '1842',
-      endDate: '1843',
-      highlights: ['Built reliable systems.']
-    }];
-    resume.templateLayouts['awesome-cv'] = [
-      {
-        id: 'experience',
-        kind: 'section',
-        section: 'experience',
-        sectionType: 'awesome-experience',
-        enabled: true,
-        options: { title: 'Selected Experience' }
-      }
-    ];
-
-    const result = await renderAdapterLatexProject(resume);
-
-    expect(result.latexSource).toContain('\\cvsection{SELECTED EXPERIENCE}');
-    expect(result.latexSource).not.toContain('\\cvsection{WORK EXPERIENCE}');
-  });
-
-  it('renders Awesome CV profile fields and itemized visible profile highlights', async () => {
+  it('renders Awesome CV profile fields and visible profile highlights', async () => {
     const resume = createResume('Social Resume', 'awesome-cv');
     resume.content.profile = {
       fullName: 'Grace Hopper',
@@ -176,11 +156,11 @@ describe('template adapters', () => {
       googleScholar: { id: 'scholar-id', name: 'G. Hopper' },
       extraInfo: 'US Navy',
       quote: 'The most dangerous phrase is we have always done it this way.',
-      hiddenFields: ['twitter', 'quote']
+      hiddenFields: ['twitter', 'quote'],
     };
     resume.content.profileHighlights = [
-      { id: 'highlight-1', text: 'Built compilers for readable systems.' },
-      { id: 'highlight-2', text: 'Hidden highlight.', hidden: true }
+      { id: 'h1', text: 'Built compilers for readable systems.' },
+      { id: 'h2', text: 'Hidden highlight.', hidden: true },
     ];
 
     const result = await renderAdapterLatexProject(resume);
@@ -198,5 +178,32 @@ describe('template adapters', () => {
 
   it('does not expose an adapter for fallback templates', () => {
     expect(getTemplateAdapter('classic-ats')).toBeUndefined();
+  });
+
+  it('awesome-cv contract declares pinnedSections, sectionEnvs, and entryTypes', () => {
+    const template = getTemplate('awesome-cv');
+    expect(template.pinnedSections).toContain('summary');
+    expect(template.sectionEnvs?.length).toBeGreaterThan(0);
+    expect(template.entryTypes?.length).toBeGreaterThan(0);
+    expect(template.entryTypes?.find((et) => et.id === 'cventry')?.fields.map((f) => f.id)).toEqual(['position', 'title', 'location', 'date', 'highlights']);
+    expect(template.sectionEnvs?.find((e) => e.id === 'experience')?.allowedEntryTypeIds).toContain('cventry');
+  });
+
+  it('hidden flex sections and entries are excluded from output', async () => {
+    const resume = createResume('Hidden Test', 'awesome-cv');
+    resume.content.profile = { fullName: 'Test', email: '', phone: '', location: '', links: [], headline: '' };
+    const visibleSection = makeSection('VISIBLE', [makeSub('cvitems', [makeEntry('item', { text: 'Should appear' })])]);
+    const hiddenSection = makeSection('HIDDEN', [makeSub('cvitems', [makeEntry('item', { text: 'Should not appear' })])]);
+    hiddenSection.hidden = true;
+    resume.content.flexSections = [visibleSection, hiddenSection];
+    resume.templateLayouts['awesome-cv'] = [
+      { id: 'v', kind: 'flex-section', flexSectionId: visibleSection.id, enabled: true },
+      { id: 'h', kind: 'flex-section', flexSectionId: hiddenSection.id, enabled: true },
+    ];
+
+    const result = await renderAdapterLatexProject(resume);
+
+    expect(result.latexSource).toContain('Should appear');
+    expect(result.latexSource).not.toContain('Should not appear');
   });
 });

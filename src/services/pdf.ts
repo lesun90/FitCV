@@ -3,7 +3,7 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { renderLatexSource } from '../domain/latex';
 import { runAtsChecks } from '../domain/checks';
-import type { CompileArtifact, ResumeRecord, SectionKey } from '../domain/types';
+import type { CompileArtifact, CvSubsectionHeading, FlexEntry, FlexSection, FlexSubSection, ResumeRecord, SectionKey } from '../domain/types';
 import { getTemplate } from '../domain/templates';
 import { getTemplateAdapter, renderAdapterLatexProject } from '../domain/templateAdapters';
 import { createId } from '../domain/ids';
@@ -82,8 +82,13 @@ export const compileResumeToPdf = async (
   draw([resume.content.profile.email, resume.content.profile.phone, resume.content.profile.location].filter(Boolean).join(' | '), 54, 9);
   y -= 8;
   for (const section of resume.sectionOrder) {
-    if (resume.hiddenSections.includes(section) || !template.supportedSections.includes(section)) continue;
+    if (resume.hiddenSections.includes(section)) continue;
     drawSection(section, resume, draw);
+    y -= 5;
+  }
+  for (const section of resume.content.flexSections) {
+    if (section.hidden) continue;
+    drawFlexSection(section, draw);
     y -= 5;
   }
 
@@ -137,22 +142,28 @@ export const extractPdfText = async (file: File) => {
 };
 
 const drawSection = (section: SectionKey, resume: ResumeRecord, draw: (text: string, x?: number, size?: number, bold?: boolean) => void) => {
-  const title = section === 'customSections' ? 'Custom' : section[0].toUpperCase() + section.slice(1);
-  const value = resume.content[section];
-  if (Array.isArray(value) && value.length === 0) return;
-  if (typeof value === 'string' && !value.trim()) return;
-  draw(title, 54, 11, true);
-  if (typeof value === 'string') draw(value, 62, 9);
-  if (section === 'skills' || section === 'awards') draw((value as string[]).join(', '), 62, 9);
-  if (section === 'experience') {
-    resume.content.experience.forEach((item) => {
-      draw(`${item.role} - ${item.company}`, 62, 9, true);
-      item.highlights.forEach((line) => draw(`- ${line}`, 72, 8));
-    });
+  if (section === 'summary' && resume.content.summary.trim()) {
+    draw('Summary', 54, 11, true);
+    draw(resume.content.summary.slice(0, 200), 62, 9);
   }
-  if (section === 'education') resume.content.education.forEach((item) => draw(`${item.degree} - ${item.school}`, 62, 9, true));
-  if (section === 'projects') resume.content.projects.forEach((item) => draw(`${item.name}: ${item.description}`, 62, 9, true));
-  if (section === 'customSections') resume.content.customSections.forEach((item) => draw(`${item.title}: ${item.body}`, 62, 9, true));
+};
+
+const drawFlexSection = (section: FlexSection, draw: (text: string, x?: number, size?: number, bold?: boolean) => void) => {
+  draw(section.name, 54, 11, true);
+  for (const item of section.items) {
+    if ('kind' in item && (item as CvSubsectionHeading).kind === 'subsection-heading') {
+      draw((item as CvSubsectionHeading).text, 62, 9, true);
+    } else if ('environment' in item) {
+      for (const entry of (item as FlexSubSection).items) {
+        if ('kind' in entry) { draw((entry as CvSubsectionHeading).text, 62, 9, true); continue; }
+        const fields = Object.values((entry as FlexEntry).fields).flatMap((v) => Array.isArray(v) ? v : [v]).filter(Boolean).slice(0, 3);
+        if (fields.length) draw(fields.join(' | '), 72, 8);
+      }
+    } else {
+      const fields = Object.values((item as FlexEntry).fields).flatMap((v) => Array.isArray(v) ? v : [v]).filter(Boolean).slice(0, 3);
+      if (fields.length) draw(fields.join(' | '), 62, 9);
+    }
+  }
 };
 
 const flattenResumeText = (resume: ResumeRecord) =>
@@ -160,11 +171,18 @@ const flattenResumeText = (resume: ResumeRecord) =>
     resume.content.profile.fullName,
     resume.content.profile.email,
     resume.content.summary,
-    ...resume.content.experience.flatMap((item) => [item.role, item.company, ...item.highlights]),
-    ...resume.content.education.flatMap((item) => [item.degree, item.school]),
-    ...resume.content.projects.flatMap((item) => [item.name, item.description]),
-    ...resume.content.skills,
-    ...resume.content.awards
+    ...resume.content.flexSections.flatMap((section) =>
+      section.items.flatMap((item) => {
+        if ('kind' in item) return [(item as CvSubsectionHeading).text];
+        if ('environment' in item) {
+          return (item as FlexSubSection).items.flatMap((entry) => {
+            if ('kind' in entry) return [(entry as CvSubsectionHeading).text];
+            return Object.values((entry as FlexEntry).fields).flatMap((v) => Array.isArray(v) ? v : [v]);
+          });
+        }
+        return Object.values((item as FlexEntry).fields).flatMap((v) => Array.isArray(v) ? v : [v]);
+      })
+    ),
   ]
     .filter(Boolean)
     .join('\n');

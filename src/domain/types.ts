@@ -1,3 +1,5 @@
+import type { LatexProjectFile } from './latexProject';
+
 export type TemplateId = 'classic-ats' | 'modern-compact' | 'awesome-cv';
 export type TemplateKey = string;
 
@@ -59,67 +61,66 @@ export interface ProfileHighlightItem {
   hidden?: boolean;
 }
 
-export interface ExperienceItem {
+// --- Flex section contract (adapter-defined) ---
+
+export interface FieldDescriptor {
   id: string;
-  company: string;
-  role: string;
-  location: string;
-  startDate: string;
-  endDate: string;
-  highlights: string[];
+  label: string;
+  multiline?: boolean;
+}
+
+export interface EntryTypeDefinition {
+  id: string;
+  label: string;
+  fields: FieldDescriptor[];
+}
+
+export interface SectionEnvDefinition {
+  id: string;
+  label: string;
+  allowedEntryTypeIds: string[];
+  allowsSubsectionHeading?: boolean;
+}
+
+export interface CvSubsectionHeading {
+  id: string;
+  kind: 'subsection-heading';
+  text: string;
+}
+
+export interface FlexEntry {
+  id: string;
+  type: string;
+  fields: Record<string, string | string[]>;
   hidden?: boolean;
 }
 
-export interface EducationItem {
+export interface FlexSubSection {
   id: string;
-  school: string;
-  degree: string;
-  location: string;
-  startDate: string;
-  endDate: string;
-  highlights: string[];
+  environment: string;
+  items: (FlexEntry | CvSubsectionHeading)[];
   hidden?: boolean;
 }
 
-export interface ProjectItem {
+export interface FlexSection {
   id: string;
   name: string;
-  description: string;
-  highlights: string[];
-  links: string[];
+  items: (FlexSubSection | FlexEntry | CvSubsectionHeading)[];
   hidden?: boolean;
 }
 
-export interface CustomSection {
-  id: string;
-  title: string;
-  body: string;
-  hidden?: boolean;
-}
-
-export interface ReviewMarker {
-  field: string;
-  sourceSnippet?: string;
-  note: string;
-  needsReview: boolean;
-}
+// --- Resume content ---
 
 export interface ResumeContent {
   profile: Profile;
   summary: string;
   profileHighlights?: ProfileHighlightItem[];
-  experience: ExperienceItem[];
-  education: EducationItem[];
-  projects: ProjectItem[];
-  skills: string[];
-  awards: string[];
-  customSections: CustomSection[];
+  flexSections: FlexSection[];
 }
 
-export type SectionKey = keyof Pick<
-  ResumeContent,
-  'summary' | 'experience' | 'education' | 'projects' | 'skills' | 'awards' | 'customSections'
->;
+export type SectionKey = 'summary';
+
+// --- Layout modules ---
 
 export type LayoutModule =
   | {
@@ -129,6 +130,12 @@ export type LayoutModule =
       sectionType: string;
       enabled: boolean;
       options?: Record<string, unknown>;
+    }
+  | {
+      id: string;
+      kind: 'flex-section';
+      flexSectionId: string;
+      enabled: boolean;
     }
   | {
       id: string;
@@ -143,11 +150,36 @@ export type LayoutModule =
       enabled: boolean;
     };
 
+// --- Adapter types ---
+
+export type LatexProjectRenderResult = {
+  files: LatexProjectFile[];
+  mainFile: string;
+  engine: 'xelatex' | 'pdflatex' | 'lualatex';
+  latexSource: string;
+  warnings: string[];
+};
+
+export type TemplateAdapter = {
+  id: TemplateKey;
+  defaultLayout: (resume: ResumeRecord) => LayoutModule[];
+  renderLatexProject?: (resume: ResumeRecord, modules: LayoutModule[]) => Promise<LatexProjectRenderResult> | LatexProjectRenderResult;
+};
+
+// --- Template settings and records ---
+
 export interface TemplateSettings {
   color: string;
   typography: string;
   spacing: 'compact' | 'comfortable';
   pagePadding: number;
+}
+
+export interface ReviewMarker {
+  field: string;
+  sourceSnippet?: string;
+  note: string;
+  needsReview: boolean;
 }
 
 export interface ResumeRecord {

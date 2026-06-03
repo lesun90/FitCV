@@ -1,36 +1,58 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeTemplateCompatibility, templates, validateTemplateRegistry } from './templates';
+import { getTemplate, templates } from './templates';
 import { createResume } from './resume';
 
 describe('template registry', () => {
-  it('ships curated templates including the first adapter-backed LaTeX layout', () => {
+  it('ships three templates including the adapter-backed Awesome CV', () => {
     expect(templates).toHaveLength(3);
-    expect(new Set(templates.map((template) => template.id)).size).toBe(3);
-    expect(templates.map((template) => template.id)).toContain('awesome-cv');
+    expect(new Set(templates.map((t) => t.id)).size).toBe(3);
+    expect(templates.map((t) => t.id)).toContain('awesome-cv');
   });
 
-  it('preserves unsupported fields when switching templates', () => {
-    const resume = createResume('Portfolio CV', 'classic-ats');
-    resume.content.projects.push({
-      id: 'project-1',
-      name: 'Compiler Workbench',
-      description: 'Browser pipeline',
-      highlights: ['PDF generation'],
-      links: []
-    });
-
-    const result = analyzeTemplateCompatibility(resume, 'modern-compact');
-
-    expect(result.unsupportedSections).toContain('projects');
-    expect(resume.content.projects).toHaveLength(1);
+  it('every template has required base fields', () => {
+    for (const template of templates) {
+      expect(template.id).toBeTruthy();
+      expect(template.name).toBeTruthy();
+      expect(template.browserCompatibility.engine).toBeTruthy();
+      expect(template.fixture.sampleResumeId).toBeTruthy();
+    }
   });
 
-  it('documents schema, render mapping, validation, compatibility, and fixture metadata for every template', () => {
-    expect(validateTemplateRegistry(templates)).toEqual([]);
-    expect(templates.every((template) => template.schema.fields.length > 0)).toBe(true);
-    expect(templates.every((template) => template.renderMapping.length > 0)).toBe(true);
-    expect(templates.every((template) => template.validationRules.length > 0)).toBe(true);
-    expect(templates.every((template) => template.browserCompatibility.engine.length > 0)).toBe(true);
-    expect(templates.every((template) => template.fixture.sampleResumeId.length > 0)).toBe(true);
+  it('awesome-cv declares a full adapter contract', () => {
+    const template = getTemplate('awesome-cv');
+    expect(template.pinnedSections).toContain('summary');
+    expect(template.sectionEnvs?.length).toBeGreaterThan(0);
+    expect(template.entryTypes?.length).toBeGreaterThan(0);
+  });
+
+  it('awesome-cv entryType fields match expected shape', () => {
+    const template = getTemplate('awesome-cv');
+    const cventry = template.entryTypes?.find((et) => et.id === 'cventry');
+    expect(cventry).toBeDefined();
+    expect(cventry?.fields.map((f) => f.id)).toContain('highlights');
+    const highlightField = cventry?.fields.find((f) => f.id === 'highlights');
+    expect(highlightField?.multiline).toBe(true);
+  });
+
+  it('awesome-cv sectionEnvs declare allowed entry types', () => {
+    const template = getTemplate('awesome-cv');
+    const experience = template.sectionEnvs?.find((e) => e.id === 'experience');
+    expect(experience?.allowedEntryTypeIds).toContain('cventry');
+    expect(experience?.allowsSubsectionHeading).toBe(true);
+    const projects = template.sectionEnvs?.find((e) => e.id === 'projects');
+    expect(projects?.allowedEntryTypeIds).toContain('projectentry');
+  });
+
+  it('classic-ats and modern-compact have no adapter contract fields', () => {
+    const classicAts = getTemplate('classic-ats');
+    expect(classicAts.pinnedSections).toBeUndefined();
+    expect(classicAts.sectionEnvs).toBeUndefined();
+    expect(classicAts.entryTypes).toBeUndefined();
+  });
+
+  it('createResume produces a resume compatible with the template', () => {
+    const resume = createResume('Test', 'awesome-cv');
+    expect(resume.content.flexSections).toEqual([]);
+    expect(resume.content.profile.fullName).toBe('');
   });
 });

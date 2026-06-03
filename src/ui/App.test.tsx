@@ -21,6 +21,32 @@ vi.mock('../services/pdf', () => ({
   generateThumbnailDataUrl: vi.fn(async () => undefined)
 }));
 
+vi.mock('../services/latexCompiler', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/latexCompiler')>();
+  return {
+    ...actual,
+    warmUpLatexRunner: vi.fn()
+  };
+});
+
+vi.mock('../services/latexTemplates', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/latexTemplates')>();
+  return {
+    ...actual,
+    loadBundledLatexProject: vi.fn(async () => ({
+      id: 'awesome-resume',
+      displayName: 'Awesome Resume',
+      rootPath: 'src/latex-templates/awesome-resume',
+      readOnly: false,
+      mainFileCandidates: ['resume.tex'],
+      files: [
+        { kind: 'text', path: 'resume.tex', contents: '\\documentclass{article}\\begin{document}Ada\\end{document}' },
+        { kind: 'text', path: 'resume/projects.tex', contents: '\\cvsection{Projects}' }
+      ]
+    }))
+  };
+});
+
 describe('FitCV UI shell', () => {
   afterEach(() => {
     cleanup();
@@ -28,7 +54,7 @@ describe('FitCV UI shell', () => {
 
   beforeEach(async () => {
     window.history.pushState({}, '', '/');
-    await indexedDB.deleteDatabase('fitcv-local-workbench');
+    indexedDB.deleteDatabase('fitcv-local-workbench');
   });
 
   it('presents the dashboard first, then opens the editor workbench and browser preview', async () => {
@@ -57,11 +83,15 @@ describe('FitCV UI shell', () => {
     expect(screen.queryByRole('option', { name: 'Classic ATS' })).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: 'Modern Compact' })).not.toBeInTheDocument();
 
+    // Summary is a pinned module — always present, no drag/delete/eye controls
     expect(await screen.findByRole('button', { name: 'Summary' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Experience' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Disable Summary/ })).not.toBeInTheDocument();
+
+    // Flex sections from sampleResume
+    expect(screen.getByRole('button', { name: 'WORK EXPERIENCE' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Space' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'New page' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Move Experience down' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Move WORK EXPERIENCE/ })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Space' }));
     const spaceInput = screen.getByRole('spinbutton', { name: 'Space value in points' });
@@ -75,31 +105,38 @@ describe('FitCV UI shell', () => {
     expect(screen.getByText('Enabled')).toBeInTheDocument();
   });
 
-  it('adds section modules from the active layout adapter', async () => {
+  it('adds modules from a single Add Module menu', async () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
-    const initialCustomModuleCount = screen.getAllByRole('button', { name: 'Custom sections' }).length;
+    const initialWorkExpCount = screen.getAllByRole('button', { name: 'WORK EXPERIENCE' }).length;
 
-    fireEvent.click(screen.getByRole('button', { name: 'Add Module' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add module' }));
 
-    expect(screen.getAllByRole('button', { name: 'Experience' }).length).toBeGreaterThan(1);
-    expect(screen.getByRole('button', { name: 'Custom Section' })).toBeInTheDocument();
+    expect(screen.getByRole('menu', { name: 'Add module options' })).toBeInTheDocument();
+    expect(screen.queryByText('Sections')).not.toBeInTheDocument();
+    expect(screen.queryByText('Layout controls')).not.toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'New section' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Space' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'New page' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Custom Section' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'New section' }));
 
-    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Custom sections' })).toHaveLength(initialCustomModuleCount + 1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'NEW SECTION' })).toBeInTheDocument());
+    expect(screen.getAllByRole('button', { name: 'WORK EXPERIENCE' })).toHaveLength(initialWorkExpCount);
   });
 
-  it('edits section module names from the layout list', async () => {
+  it('edits flex section names from the editor column header', async () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
-    fireEvent.click(screen.getByRole('button', { name: 'Edit Experience' }));
-    const sectionNameInput = screen.getByRole('textbox', { name: 'Section name for Experience' });
-    fireEvent.change(sectionNameInput, {
-      target: { value: 'Selected Experience' }
-    });
+    fireEvent.click(screen.getByRole('button', { name: 'WORK EXPERIENCE' }));
+
+    expect(screen.queryByRole('button', { name: 'Rename WORK EXPERIENCE' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit section name' }));
+    const sectionNameInput = screen.getByRole('textbox', { name: 'Section name' });
+    fireEvent.change(sectionNameInput, { target: { value: 'Selected Experience' } });
     fireEvent.blur(sectionNameInput);
 
     await waitFor(() => expect(screen.getByRole('button', { name: 'Selected Experience' })).toBeInTheDocument());
@@ -127,21 +164,14 @@ describe('FitCV UI shell', () => {
     expect(screen.getAllByRole('button', { name: /Remove profile highlight \d+/ }).length).toBeGreaterThan(0);
   });
 
-  it('shows when profile highlights will not compile because Summary is disabled', async () => {
+  it('shows the flex section editor when a flex section module is selected', async () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Disable Summary' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'WORK EXPERIENCE' }));
 
-    await waitFor(() => expect(screen.getByText('Summary disabled')).toBeInTheDocument());
-    expect(screen.getByText('0 visible on resume')).toBeInTheDocument();
-    expect(screen.getByText('Profile highlights are saved, but they will not compile until the Summary module is enabled.')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Enable Summary highlights' }));
-
-    await waitFor(() => expect(screen.queryByText('Summary disabled')).not.toBeInTheDocument());
-    expect(screen.getByText('1 visible on resume')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /sub-section/i }).length).toBeGreaterThan(0));
+    expect(screen.getAllByRole('button', { name: /entry/i }).length).toBeGreaterThan(0);
   });
 
   it('clears compile busy state and surfaces errors when PDF compile throws', async () => {
@@ -202,6 +232,20 @@ describe('FitCV UI shell', () => {
     expect(screen.getByRole('button', { name: /Open Awesome Resume/i })).toBeInTheDocument();
     expect(screen.getByText(/AGPL obligations accepted/i)).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'My Resumes' })).not.toBeInTheDocument();
+  });
+
+  it('opens the standalone LaTeX workbench with document-studio landmarks', async () => {
+    window.history.pushState({}, '', '/latexeditor');
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Open Awesome Resume/i }));
+
+    expect(await screen.findByRole('complementary', { name: 'Template files' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Source workspace' })).toBeInTheDocument();
+    expect(screen.getByRole('complementary', { name: 'PDF output and compiler drawer' })).toBeInTheDocument();
+    expect(screen.getByText('Studio route')).toBeInTheDocument();
+    expect(screen.getByText(/Ready for first compile/i)).toBeInTheDocument();
   });
 
   it('formats LaTeX source and PDF preview URLs for the focused editor UI', () => {
