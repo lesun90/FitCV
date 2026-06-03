@@ -16,6 +16,7 @@ import {
   Zap
 } from 'lucide-react';
 import { downloadBlob, StatusPill } from './shared';
+import { AiAssistButton, AiSettingsButton } from './AiAssist';
 import { buildLatexFileTree, type LatexFileTreeNode, type LatexProjectFile } from '../domain/latexProject';
 import {
   busyTexLicenseReview,
@@ -188,6 +189,7 @@ export const LatexEditorRoute = () => {
             onClick={() => setAutoCompile((v) => !v)}
             aria-label={autoCompile ? 'Disable auto-compile' : 'Enable auto-compile'}
           ><Zap />Auto</button>
+          <AiSettingsButton />
           <button className="chrome-button" disabled={!project || Boolean(busy)} onClick={() => compileProject()}><Play />Compile</button>
           <button className="chrome-button primary" disabled={!compileResult?.pdfBlob} onClick={() => compileResult?.pdfBlob && downloadBlob(compileResult.pdfBlob, `${project?.displayName ?? 'latex-project'}.pdf`)}><Download />PDF</button>
         </div>
@@ -299,6 +301,8 @@ const LatexCodeEditor = ({
   const highlightRef = useRef<HTMLPreElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [history, setHistory] = useState<EditorHistory>({ past: [], future: [] });
+  const [selectionActive, setSelectionActive] = useState(false);
+  const [anchorPosition, setAnchorPosition] = useState({ x: 12, y: 12 });
 
   useEffect(() => {
     setHistory({ past: [], future: [] });
@@ -343,6 +347,22 @@ const LatexCodeEditor = ({
       selectionStart: Math.min(el.selectionStart, sourceContents.length),
       selectionEnd: Math.min(el.selectionEnd, sourceContents.length)
     };
+  };
+
+  const updateSelectionActive = (event?: { clientX?: number; clientY?: number }) => {
+    const el = textareaRef.current;
+    const active = Boolean(el && el.selectionStart !== el.selectionEnd);
+    setSelectionActive(active);
+    if (!active || !el) return;
+    const rect = el.getBoundingClientRect();
+    if (typeof event?.clientX === 'number' && typeof event.clientY === 'number') {
+      setAnchorPosition({
+        x: Math.max(12, event.clientX - rect.left + el.scrollLeft),
+        y: Math.max(12, event.clientY - rect.top + el.scrollTop)
+      });
+      return;
+    }
+    setAnchorPosition({ x: Math.max(12, el.clientWidth - 48), y: Math.max(12, el.scrollTop + 12) });
   };
 
   const recordUndo = (previous: EditorSnapshot) => {
@@ -457,8 +477,24 @@ const LatexCodeEditor = ({
             highlightRef.current.style.transform = `translate(-${scrollLeft}px, -${scrollTop}px)`;
           }}
           onKeyDown={handleKeyDown}
+          onKeyUp={() => updateSelectionActive()}
+          onMouseUp={(e) => updateSelectionActive(e)}
+          onSelect={() => updateSelectionActive()}
           onChange={(event) => changeContents(event.target.value, snapshot(contents))}
           aria-label={`Editing ${activePath}`}
+        />
+        <AiAssistButton
+          anchorPosition={anchorPosition}
+          disabled={readOnly}
+          fieldLabel="LaTeX source"
+          selectionActive={selectionActive}
+          value={contents}
+          getValue={() => textareaRef.current?.value ?? contents}
+          getSelection={() => ({
+            start: textareaRef.current?.selectionStart ?? contents.length,
+            end: textareaRef.current?.selectionEnd ?? contents.length
+          })}
+          onApply={(next) => changeContents(next, snapshot(contents))}
         />
       </div>
     </div>

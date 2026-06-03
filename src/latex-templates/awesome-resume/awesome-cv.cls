@@ -775,15 +775,21 @@
 }
 
 % Define an environment for patents
-% Usage: \cvhonor{<title>}{<patent-number>}{}{<granted-date>}
 \newenvironment{patents}{
   \begin{center}
     \setlength\tabcolsep{0pt}
     \setlength{\extrarowheight}{0pt}
-    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} L{3cm} L{12cm} R{2cm}}
+    \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} L{13cm} R{4cm}}
 }{
     \end{tabular*}
   \end{center}
+}
+
+% Define a line of cv information for patents (patent number on new line below title)
+% Usage: \cvpatent{<title>}{<patent-number>}{<granted-date>}
+\newcommand*{\cvpatent}[3]{
+  \honorpositionstyle{#1}\newline\honortitlestyle{#2} & \honordatestyle{#3}
+  \\
 }
 
 % Define an environment for publications

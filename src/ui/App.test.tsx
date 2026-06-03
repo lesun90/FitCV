@@ -1,4 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { formatPdfPreviewUrl, highlightLatexSource, parseLatexDiagnostics, renderRichLatexText } from './latexUtils';
@@ -51,6 +53,17 @@ vi.mock('../services/latexTemplates', async (importOriginal) => {
         { kind: 'text', path: 'resume.tex', contents: '\\documentclass{article}\\begin{document}Ada\\end{document}' },
         { kind: 'text', path: 'resume/projects.tex', contents: '\\cvsection{Projects}' }
       ]
+    }))
+  };
+});
+
+vi.mock('../services/aiProvider', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/aiProvider')>();
+  return {
+    ...actual,
+    requestAiSuggestion: vi.fn(async () => ({
+      replacement: 'Led Q4 launch for 12 vehicles.',
+      rationale: 'Sharper impact.'
     }))
   };
 });
@@ -170,6 +183,55 @@ describe('FitCV UI shell', () => {
     await waitFor(() => expect(screen.getAllByLabelText('Profile highlight item').length).toBeGreaterThan(1));
     expect(screen.getAllByRole('button', { name: /Hide profile highlight \d+|Show profile highlight \d+/ }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: /Remove profile highlight \d+/ }).length).toBeGreaterThan(0);
+  });
+
+  it('requires AI setup before sending selected editor field content', async () => {
+    const { requestAiSuggestion } = await import('../services/aiProvider');
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
+    expect(screen.queryByRole('button', { name: 'AI assist Name' })).not.toBeInTheDocument();
+    const nameInput = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement;
+    nameInput.setSelectionRange(0, nameInput.value.length);
+    fireEvent.select(nameInput);
+    fireEvent.mouseUp(nameInput, { clientX: 120, clientY: 36 });
+    expect(screen.getByRole('button', { name: 'AI assist Name' }).parentElement).toHaveStyle({ left: '120px' });
+    fireEvent.click(screen.getByRole('button', { name: 'AI assist Name' }));
+
+    expect(await screen.findByText('AI setup required')).toBeInTheDocument();
+    expect(requestAiSuggestion).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set up AI' }));
+
+    expect(screen.getByRole('dialog', { name: 'AI settings' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Endpoint URL')).toHaveValue('');
+    expect(screen.getByLabelText('Remember API key on this device')).not.toBeChecked();
+  });
+
+  it('reviews AI suggestions before applying them to a selected editor field', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'AI settings' }));
+    fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://ai.example.test/v1/chat/completions' } });
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'cv-model' } });
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'session-secret' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
+    const nameInput = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement;
+    fireEvent.change(nameInput, { target: { value: 'Led Q4 launch for 12 vehicles across multiple teams.' } });
+    nameInput.setSelectionRange(0, nameInput.value.length);
+    fireEvent.select(nameInput);
+    fireEvent.click(screen.getByRole('button', { name: 'AI assist Name' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Shorten' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send to provider' }));
+
+    expect(await screen.findByText('Led Q4 launch for 12 vehicles.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }));
+
+    expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Led Q4 launch for 12 vehicles.');
   });
 
   it('shows the flex section editor when a flex section module is selected', async () => {
@@ -363,6 +425,29 @@ describe('FitCV UI shell', () => {
     expect(editor).toHaveValue('\\underline{Ada}');
   });
 
+  it('reviews AI suggestions before applying them to LaTeX source selections', async () => {
+    window.history.pushState({}, '', '/latexeditor');
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Open Awesome Resume/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'AI settings' }));
+    fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://ai.example.test/v1/chat/completions' } });
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'cv-model' } });
+    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'session-secret' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+
+    const editor = await screen.findByRole('textbox', { name: 'Editing resume.tex' }) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: '\\item Led Q4 launch for 12 vehicles across multiple teams.' } });
+    editor.setSelectionRange(6, editor.value.length);
+    fireEvent.select(editor);
+    fireEvent.click(screen.getByRole('button', { name: 'AI assist LaTeX source' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Shorten' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Send to provider' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Accept suggestion' }));
+
+    expect(editor).toHaveValue('\\item Led Q4 launch for 12 vehicles.');
+  });
+
   it('formats LaTeX source and PDF preview URLs for the focused editor UI', () => {
     const { container } = render(<pre>{highlightLatexSource('\\documentclass{article}\n% note')}</pre>);
 
@@ -370,6 +455,15 @@ describe('FitCV UI shell', () => {
     expect(container.querySelector('.latex-syntax-brace')?.textContent).toBe('{');
     expect(container.querySelector('.latex-syntax-comment')?.textContent).toBe('% note');
     expect(formatPdfPreviewUrl('blob:fitcv-pdf')).toBe('blob:fitcv-pdf#toolbar=0&navpanes=0&scrollbar=0&view=FitH');
+  });
+
+  it('keeps LaTeX source text readable while editing and selecting', () => {
+    const styles = readFileSync(join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+
+    expect(styles).toMatch(/\.latex-code-editor\s*{[^}]*color:\s*#152033;/s);
+    expect(styles).not.toMatch(/\.latex-code-editor\s*{[^}]*color:\s*transparent;/s);
+    expect(styles).toMatch(/\.latex-code-editor::selection\s*{[^}]*color:\s*#1d252c;/s);
+    expect(styles).not.toMatch(/\.latex-code-editor::selection\s*{[^}]*color:\s*transparent;/s);
   });
 
   it('parses LaTeX logs into actionable diagnostics', () => {

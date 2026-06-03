@@ -253,13 +253,16 @@ export interface ScoringReportRecord {
   createdAt: string;
 }
 
+export type AiProvider = 'openai' | 'deepseek' | 'gemini' | 'claude' | 'local';
+
 export interface ProviderSettingsRecord {
   id: string;
   schemaVersion: 1;
-  provider: 'openai' | 'claude' | 'deepseek' | 'gemini' | 'local-openai-compatible';
-  endpoint?: string;
-  model?: string;
-  rememberApiKey: false;
+  provider?: AiProvider;
+  endpointUrl: string;
+  model: string;
+  rememberApiKey: boolean;
+  apiKey?: string;
   createdAt: string;
   updatedAt: string;
 }

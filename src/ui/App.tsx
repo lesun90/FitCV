@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
@@ -46,6 +46,7 @@ import type {
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
+import { AiAssistButton, AiSettingsButton } from './AiAssist';
 import { formatPdfPreviewUrl, parseLatexDiagnostics, type LatexDiagnosticIssue } from './latexUtils';
 import { WysiwygEditor } from './WysiwygEditor';
 import { downloadBlob, StatusPill } from './shared';
@@ -238,8 +239,13 @@ export const App = () => {
   };
 
   const exportArchive = async () => {
-    const [fittedCvs, jobDescriptions, scoringReports] = await Promise.all([storage.listFittedCvs(), storage.listJobDescriptions(), storage.listScoringReports()]);
-    const file = await exportFitcvArchive({ resumes, artifacts: artifact ? [artifact] : [], fittedCvs, jobDescriptions, scoringReports });
+    const [fittedCvs, jobDescriptions, scoringReports, providerSettings] = await Promise.all([
+      storage.listFittedCvs(),
+      storage.listJobDescriptions(),
+      storage.listScoringReports(),
+      storage.listProviderSettings(),
+    ]);
+    const file = await exportFitcvArchive({ resumes, artifacts: artifact ? [artifact] : [], fittedCvs, jobDescriptions, scoringReports, providerSettings });
     downloadBlob(file, file.name);
   };
 
@@ -291,6 +297,7 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, warningCount, busy
     <TopChrome label="Resume library">
       <label className="chrome-button"><Upload />PDF<input type="file" accept="application/pdf" onChange={(e) => e.target.files?.[0] && onImportPdf(e.target.files[0])} /></label>
       <label className="chrome-button"><FileArchive />Import<input type="file" accept=".fitcv,application/json" onChange={(e) => e.target.files?.[0] && onImportArchive(e.target.files[0])} /></label>
+      <AiSettingsButton />
       <button className="chrome-button primary" onClick={onCreate}><FilePlus2 />New Resume</button>
     </TopChrome>
     <section className="dashboard-page" aria-labelledby="dashboard-heading">
@@ -371,7 +378,7 @@ const EditorWorkspace = ({ active, activeTemplate, artifact, autoCompile, busy, 
         <div className="magic-brand"><strong>FitCV</strong><span>/</span></div>
         <button className="ghost-button back-link" onClick={onBack}><ChevronLeft />Dashboard</button>
         <div className="resume-name-field">
-          <input value={active.title} onChange={(e) => onChange((resume) => renameResume(resume, e.target.value))} aria-label="Resume title" />
+          <AiInput value={active.title} onValue={(value) => onChange((resume) => renameResume(resume, value))} ariaLabel="Resume title" assistLabel="Resume title" />
           <Pencil aria-hidden="true" />
         </div>
         <label className="top-layout-select">
@@ -388,6 +395,7 @@ const EditorWorkspace = ({ active, activeTemplate, artifact, autoCompile, busy, 
             {cleanCompile ? <CheckCircle2 /> : <Clock3 />}{cleanCompile ? 'PDF ready' : 'Not backed up'}
           </span>
           <div className="chrome-action-group">
+            <AiSettingsButton />
             <button className={`chrome-button${autoCompile ? ' selected' : ''}`} onClick={onToggleAutoCompile} title={autoCompile ? 'Auto-compile on' : 'Auto-compile off'}><Zap />Auto</button>
             <button className="chrome-button" onClick={onCompile} disabled={!!busy}><RotateCw />Compile</button>
             <button className="chrome-button primary" disabled={!artifact?.pdfBlob || artifact.status !== 'clean'} onClick={onDownloadPdf}><Download />Export</button>
@@ -718,11 +726,12 @@ const EditorPanel = ({ active, onChange, reviewCount, selectedModule }: {
     <section className="panel editor" aria-label="Section editor">
       <div className="editor-subhead">
         {editingSectionName ? (
-          <input
-            aria-label="Section name"
+          <AiInput
+            ariaLabel="Section name"
+            assistLabel="Section name"
             className="editor-subhead-input"
             value={label}
-            onChange={(e) => renameSelectedModule(e.target.value)}
+            onValue={renameSelectedModule}
             onBlur={() => setEditingSectionName(false)}
             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') e.currentTarget.blur(); }}
             autoFocus
@@ -1221,6 +1230,94 @@ const FlexEntryEditor = ({ entry, entryTypes, onUpdate, onRemove, onGripDown }: 
 // --- Shared UI primitives ---
 
 
+const AiInput = ({
+  ariaLabel,
+  assistLabel,
+  autoFocus,
+  className,
+  onBlur,
+  onKeyDown,
+  onValue,
+  type = 'text',
+  value
+}: {
+  ariaLabel: string;
+  assistLabel: string;
+  autoFocus?: boolean;
+  className?: string;
+  onBlur?: () => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
+  onValue: (value: string) => void;
+  type?: string;
+  value: string;
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const [draft, setDraft] = useState(value);
+  const [selectionActive, setSelectionActive] = useState(false);
+  const [anchorPosition, setAnchorPosition] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const updateSelectionActive = (event?: { clientX?: number; clientY?: number }) => {
+    const el = inputRef.current;
+    const active = Boolean(el && el.selectionStart !== el.selectionEnd);
+    setSelectionActive(active);
+    if (!active || !wrapRef.current) return;
+    if (typeof event?.clientX === 'number' && typeof event.clientY === 'number') {
+      const rect = wrapRef.current.getBoundingClientRect();
+      setAnchorPosition({
+        x: Math.max(8, event.clientX - rect.left),
+        y: Math.max(8, event.clientY - rect.top)
+      });
+      return;
+    }
+    setAnchorPosition({ x: wrapRef.current.clientWidth - 28, y: 8 });
+  };
+
+  const update = (next: string) => {
+    setDraft(next);
+    onValue(next);
+    requestAnimationFrame(() => updateSelectionActive());
+  };
+
+  return (
+    <span className="ai-input-wrap" ref={wrapRef}>
+      <input
+        ref={inputRef}
+        aria-label={ariaLabel}
+        autoFocus={autoFocus}
+        className={className}
+        type={type}
+        value={draft}
+        onBlur={onBlur}
+        onChange={(e) => update(e.target.value)}
+        onKeyDown={(e) => { onKeyDown?.(e); requestAnimationFrame(() => updateSelectionActive()); }}
+        onKeyUp={() => updateSelectionActive()}
+        onMouseUp={(e) => updateSelectionActive(e)}
+        onSelect={() => updateSelectionActive()}
+      />
+      <AiAssistButton
+        anchorPosition={anchorPosition}
+        fieldLabel={assistLabel}
+        selectionActive={selectionActive}
+        value={draft}
+        getValue={() => inputRef.current?.value ?? draft}
+        getSelection={() => ({
+          start: inputRef.current?.selectionStart ?? draft.length,
+          end: inputRef.current?.selectionEnd ?? draft.length
+        })}
+        onApply={(next) => {
+          update(next);
+          requestAnimationFrame(() => inputRef.current?.focus());
+        }}
+      />
+    </span>
+  );
+};
+
 type SectionEditorOnChange = (recipe: (r: ResumeRecord) => ResumeRecord) => void;
 
 type ProfileTextFieldProps = {
@@ -1234,12 +1331,11 @@ type ProfileTextFieldProps = {
 };
 
 const ProfileTextField = ({ field, hidden, label, onChange, parseValue, type = 'text', value }: ProfileTextFieldProps) => {
-  const inputId = `profile-${field}`;
   return (
     <div className={`profile-field-row${hidden ? ' profile-field-hidden' : ''}`}>
-      <label className="field-label" htmlFor={inputId}>{label}</label>
-      <input id={inputId} type={type} value={value}
-        onChange={(e) => onChange((r) => updateProfileField(r, field, parseValue ? parseValue(e.target.value) : e.target.value))} />
+      <span className="field-label">{label}</span>
+      <AiInput ariaLabel={label} assistLabel={label} type={type} value={value}
+        onValue={(next) => onChange((r) => updateProfileField(r, field, parseValue ? parseValue(next) : next))} />
       <button className="ghost-button item-hide" aria-label={hidden ? `Show ${label}` : `Hide ${label}`} title={hidden ? `Show ${label}` : `Hide ${label}`}
         onClick={() => onChange((r) => toggleProfileField(r, field))}>
         {hidden ? <EyeOff /> : <Eye />}
@@ -1258,11 +1354,10 @@ type ProfileNestedTextFieldProps = {
 };
 
 const ProfileNestedTextField = ({ group, hidden, keyName, label, onChange, value }: ProfileNestedTextFieldProps) => {
-  const inputId = `profile-${group}-${keyName}`;
   return (
     <div className={`profile-field-row${hidden ? ' profile-field-hidden' : ''}`}>
-      <label className="field-label" htmlFor={inputId}>{label}</label>
-      <input id={inputId} value={value} onChange={(e) => onChange((r) => updateNestedProfileField(r, group, keyName, e.target.value))} />
+      <span className="field-label">{label}</span>
+      <AiInput ariaLabel={label} assistLabel={label} value={value} onValue={(next) => onChange((r) => updateNestedProfileField(r, group, keyName, next))} />
       <button className="ghost-button item-hide" aria-label={hidden ? `Show ${label}` : `Hide ${label}`} title={hidden ? `Show ${label}` : `Hide ${label}`}
         onClick={() => onChange((r) => toggleProfileField(r, group))}>
         {hidden ? <EyeOff /> : <Eye />}

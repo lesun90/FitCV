@@ -1,5 +1,7 @@
-import type { CompileArtifact, FittedCvRecord, JobDescriptionRecord, ResumeRecord, ScoringReportRecord } from './types';
+import type { CompileArtifact, FittedCvRecord, JobDescriptionRecord, ProviderSettingsRecord, ResumeRecord, ScoringReportRecord } from './types';
 import { ensureTemplateLayouts } from './resume';
+
+type ExportedProviderSettings = Omit<ProviderSettingsRecord, 'apiKey'> & { rememberApiKey: false };
 
 export interface FitcvArchive {
   schemaVersion: 1;
@@ -8,8 +10,12 @@ export interface FitcvArchive {
   fittedCvs: FittedCvRecord[];
   jobDescriptions: JobDescriptionRecord[];
   scoringReports: ScoringReportRecord[];
+  providerSettings: ExportedProviderSettings[];
   artifacts: Omit<CompileArtifact, 'pdfBlob'>[];
 }
+
+const sanitizeProviderSettings = (settings: ProviderSettingsRecord[]): ExportedProviderSettings[] =>
+  settings.map(({ apiKey: _apiKey, ...safe }) => ({ ...safe, rememberApiKey: false }));
 
 export const exportFitcvArchive = async (input: {
   resumes: ResumeRecord[];
@@ -17,6 +23,7 @@ export const exportFitcvArchive = async (input: {
   fittedCvs?: FittedCvRecord[];
   jobDescriptions?: JobDescriptionRecord[];
   scoringReports?: ScoringReportRecord[];
+  providerSettings?: ProviderSettingsRecord[];
 }) => {
   const archive: FitcvArchive = {
     schemaVersion: 1,
@@ -25,6 +32,7 @@ export const exportFitcvArchive = async (input: {
     fittedCvs: input.fittedCvs ?? [],
     jobDescriptions: input.jobDescriptions ?? [],
     scoringReports: input.scoringReports ?? [],
+    providerSettings: sanitizeProviderSettings(input.providerSettings ?? []),
     artifacts: input.artifacts.map(({ pdfBlob: _pdfBlob, ...artifact }) => artifact)
   };
   const payload = JSON.stringify(archive, null, 2);
@@ -46,6 +54,7 @@ export const importFitcvArchive = async (file: Blob): Promise<FitcvArchive> => {
   archive.fittedCvs ??= [];
   archive.jobDescriptions ??= [];
   archive.scoringReports ??= [];
+  archive.providerSettings ??= [];
   archive.artifacts ??= [];
   const serialized = JSON.stringify(archive);
   if (/api[_-]?key|secret|token/i.test(serialized)) {

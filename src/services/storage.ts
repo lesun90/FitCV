@@ -194,10 +194,33 @@ export const storage = {
       database.close();
     }
   },
+  async getProviderSettings() {
+    const database = await db();
+    try {
+      return database.get('providerSettings', 'default');
+    } finally {
+      database.close();
+    }
+  },
   async saveProviderSettings(providerSettings: ProviderSettingsRecord) {
     const database = await db();
     try {
       await database.put('providerSettings', providerSettings);
+    } finally {
+      database.close();
+    }
+  },
+  async clearRememberedProviderApiKey() {
+    const database = await db();
+    try {
+      const current = await database.get('providerSettings', 'default');
+      if (!current) return;
+      const { apiKey: _apiKey, ...withoutKey } = current;
+      await database.put('providerSettings', {
+        ...withoutKey,
+        rememberApiKey: false,
+        updatedAt: new Date().toISOString()
+      });
     } finally {
       database.close();
     }

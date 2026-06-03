@@ -24,7 +24,7 @@ const sectionEnvs: SectionEnvDefinition[] = [
   { id: 'projects',        label: 'Projects',        allowedEntryTypeIds: ['projectentry'],  allowsSubsectionHeading: false },
   { id: 'researchentries', label: 'Research Entries', allowedEntryTypeIds: ['researchentry'], allowsSubsectionHeading: true  },
   { id: 'cvhonors',        label: 'Honors & Awards', allowedEntryTypeIds: ['cvhonor'],       allowsSubsectionHeading: true  },
-  { id: 'patents',         label: 'Patents',         allowedEntryTypeIds: ['cvhonor'],       allowsSubsectionHeading: false },
+  { id: 'patents',         label: 'Patents',         allowedEntryTypeIds: ['cvpatent'],      allowsSubsectionHeading: false },
   { id: 'cvskills',        label: 'Skills',          allowedEntryTypeIds: ['cvskill'],       allowsSubsectionHeading: true  },
   { id: 'cvitems',         label: 'Bullet List',     allowedEntryTypeIds: ['item'],          allowsSubsectionHeading: true  },
   { id: 'publications',    label: 'Publications',    allowedEntryTypeIds: ['item'],          allowsSubsectionHeading: false },
@@ -69,6 +69,15 @@ const entryTypes: EntryTypeDefinition[] = [
       { id: 'event',    label: 'Event' },
       { id: 'location', label: 'Location' },
       { id: 'date',     label: 'Date' },
+    ],
+  },
+  {
+    id: 'cvpatent',
+    label: 'Patent',
+    fields: [
+      { id: 'award', label: 'Title' },
+      { id: 'event', label: 'Patent Number' },
+      { id: 'date',  label: 'Date' },
     ],
   },
   {
@@ -192,6 +201,9 @@ const renderFlexEntry = (entry: FlexEntry, indent: string): string => {
     }
     case 'cvhonor': {
       return `${indent}\\cvhonor{${escapeLatex(field('award'))}}{${escapeLatex(field('event'))}}{${escapeLatex(field('location'))}}{${escapeLatex(field('date'))}} `;
+    }
+    case 'cvpatent': {
+      return `${indent}\\cvpatent{${escapeLatex(field('award'))}}{${escapeLatex(field('event'))}}{${escapeLatex(field('date'))}} `;
     }
     case 'cvskill': {
       return `${indent}\\cvskill{${escapeLatex(field('type'))}}{${escapeLatex(field('skills'))}}`;

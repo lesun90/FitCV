@@ -38,4 +38,30 @@ describe('.fitcv archive', () => {
 
     expect(imported.resumes[0].templateLayouts['awesome-cv']).toBeDefined();
   });
+
+  it('strips provider API keys when provider metadata is exported', async () => {
+    const file = await exportFitcvArchive({
+      resumes: [],
+      artifacts: [],
+      fittedCvs: [],
+      jobDescriptions: [],
+      scoringReports: [],
+      providerSettings: [{
+        id: 'default',
+        schemaVersion: 1,
+        endpointUrl: 'https://ai.example.test/v1/chat/completions',
+        model: 'cv-model',
+        rememberApiKey: true,
+        apiKey: 'remembered-secret',
+        createdAt: '2026-06-03T00:00:00.000Z',
+        updatedAt: '2026-06-03T00:00:00.000Z'
+      }]
+    });
+
+    const payload = await file.text();
+
+    expect(payload).toContain('https://ai.example.test');
+    expect(payload).not.toContain('remembered-secret');
+    expect(payload).not.toContain('apiKey');
+  });
 });

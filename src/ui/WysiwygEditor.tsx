@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
@@ -7,6 +7,7 @@ import { Color } from '@tiptap/extension-color';
 import Placeholder from '@tiptap/extension-placeholder';
 import { LATEX_COLORS } from './latexUtils';
 import { latexToTiptap, tiptapToLatex } from './latexTiptap';
+import { AiAssistButton } from './AiAssist';
 
 export const WysiwygEditor = ({ label, ariaLabel, value, placeholder, onChange, showToolbar = true, singleLine = false }: {
   label?: string;
@@ -18,6 +19,21 @@ export const WysiwygEditor = ({ label, ariaLabel, value, placeholder, onChange, 
   singleLine?: boolean;
 }) => {
   const lastLatexRef = useRef(value);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [selectionActive, setSelectionActive] = useState(false);
+  const [anchorPosition, setAnchorPosition] = useState({ x: 12, y: 12 });
+
+  const updateAnchorFromDomSelection = () => {
+    const wrap = wrapRef.current;
+    const selection = window.getSelection();
+    if (!wrap || !selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+    const rect = selection.getRangeAt(0).getBoundingClientRect();
+    const wrapRect = wrap.getBoundingClientRect();
+    setAnchorPosition({
+      x: Math.max(8, rect.right - wrapRect.left),
+      y: Math.max(8, rect.top - wrapRect.top)
+    });
+  };
 
   const editor = useEditor({
     extensions: [
@@ -53,6 +69,11 @@ export const WysiwygEditor = ({ label, ariaLabel, value, placeholder, onChange, 
       const latex = tiptapToLatex(editor.getJSON());
       lastLatexRef.current = latex;
       onChange(latex);
+    },
+    onSelectionUpdate: ({ editor }) => {
+      const active = !editor.state.selection.empty;
+      setSelectionActive(active);
+      if (active) requestAnimationFrame(updateAnchorFromDomSelection);
     },
   });
 
@@ -110,11 +131,22 @@ export const WysiwygEditor = ({ label, ariaLabel, value, placeholder, onChange, 
   ].filter(Boolean).join(' ');
 
   const inner = (
-    <div className={wrapClass}>
+    <div className={wrapClass} ref={wrapRef} onMouseUp={updateAnchorFromDomSelection} onKeyUp={updateAnchorFromDomSelection}>
       {toolbar}
       <div className="rich-text-frame">
         <EditorContent editor={editor} />
       </div>
+      <AiAssistButton
+        anchorPosition={anchorPosition}
+        fieldLabel={label ?? ariaLabel ?? 'Rich text field'}
+        selectionActive={selectionActive}
+        value={value}
+        onApply={(next) => {
+          lastLatexRef.current = next;
+          onChange(next);
+          editor?.commands.focus();
+        }}
+      />
     </div>
   );
 
