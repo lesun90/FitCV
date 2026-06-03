@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
-import { formatPdfPreviewUrl, highlightLatexSource, renderRichLatexText } from './latexUtils';
+import { formatPdfPreviewUrl, highlightLatexSource, parseLatexDiagnostics, renderRichLatexText } from './latexUtils';
 
 vi.mock('../services/pdf', () => ({
   compileResumeToPdf: vi.fn(async () => ({
@@ -25,6 +25,14 @@ vi.mock('../services/latexCompiler', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/latexCompiler')>();
   return {
     ...actual,
+    compileLatexProject: vi.fn(async () => ({
+      status: 'success',
+      pdfBlob: new Blob(['pdf'], { type: 'application/pdf' }),
+      logs: ['ok'],
+      diagnostics: [],
+      elapsedMs: 120,
+      cacheState: 'cached'
+    })),
     warmUpLatexRunner: vi.fn()
   };
 });
@@ -186,6 +194,38 @@ describe('FitCV UI shell', () => {
     expect(screen.queryByText('Compiling in browser')).not.toBeInTheDocument();
   });
 
+  it('shows actionable LaTeX errors in the main FitCV editor preview', async () => {
+    const { compileResumeToPdf } = await import('../services/pdf');
+    vi.mocked(compileResumeToPdf).mockResolvedValueOnce({
+      id: 'artifact-failed',
+      schemaVersion: 1,
+      resumeId: 'resume-test',
+      templateId: 'awesome-cv',
+      resumeVersion: 1,
+      status: 'failed',
+      logs: [
+        '(./resume.tex',
+        '(./resume/experience.tex',
+        '! Undefined control sequence.',
+        'l.12 \\badMacro',
+        ')'
+      ],
+      latexSource: '\\documentclass{article}',
+      generatedText: 'Ada Lovelace',
+      createdAt: '2026-06-01T00:00:00.000Z',
+      updatedAt: '2026-06-01T00:00:00.000Z'
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Compile' })[0]);
+
+    expect(await screen.findByRole('heading', { name: 'Compile needs attention' })).toBeInTheDocument();
+    expect(screen.getAllByText('Undefined command').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/LaTeX does not recognize/).length).toBeGreaterThan(0);
+    expect(screen.getByText('resume/experience.tex:12')).toBeInTheDocument();
+  });
+
   it('manual compile uses the active resume instead of the click event', async () => {
     const { compileResumeToPdf } = await import('../services/pdf');
     render(<App />);
@@ -248,6 +288,81 @@ describe('FitCV UI shell', () => {
     expect(screen.getByText(/Ready for first compile/i)).toBeInTheDocument();
   });
 
+  it('shows actionable LaTeX compile issues and opens the source file', async () => {
+    window.history.pushState({}, '', '/latexeditor');
+    const { compileLatexProject } = await import('../services/latexCompiler');
+    vi.mocked(compileLatexProject).mockResolvedValueOnce({
+      status: 'failed',
+      logs: [
+        '(./resume.tex',
+        '(./resume/projects.tex',
+        '! Undefined control sequence.',
+        'l.2 \\missingCommand',
+        ')'
+      ],
+      diagnostics: ['! Undefined control sequence.', 'l.2 \\missingCommand'],
+      elapsedMs: 88,
+      cacheState: 'cached'
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Open Awesome Resume/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Compile' }));
+
+    const issue = await screen.findByRole('button', { name: /Open resume\/projects\.tex line 2/i });
+    expect(screen.getByRole('heading', { name: 'Compile needs attention' })).toBeInTheDocument();
+    expect(screen.getAllByText('Undefined command')).toHaveLength(2);
+    expect(screen.getAllByText(/LaTeX does not recognize/)).toHaveLength(2);
+
+    fireEvent.click(issue);
+
+    expect(await screen.findByRole('textbox', { name: 'Editing resume/projects.tex' })).toBeInTheDocument();
+  });
+
+  it('supports keyboard undo and redo in the standalone LaTeX source editor', async () => {
+    window.history.pushState({}, '', '/latexeditor');
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Open Awesome Resume/i }));
+    const editor = await screen.findByRole('textbox', { name: 'Editing resume.tex' });
+
+    fireEvent.change(editor, { target: { value: 'first edit' } });
+    fireEvent.change(editor, { target: { value: 'second edit' } });
+    expect(editor).toHaveValue('second edit');
+
+    fireEvent.keyDown(editor, { key: 'z', ctrlKey: true });
+    expect(editor).toHaveValue('first edit');
+
+    fireEvent.keyDown(editor, { key: 'y', ctrlKey: true });
+    expect(editor).toHaveValue('second edit');
+  });
+
+  it('supports keyboard formatting shortcuts in the standalone LaTeX source editor', async () => {
+    window.history.pushState({}, '', '/latexeditor');
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /Open Awesome Resume/i }));
+    const editor = await screen.findByRole('textbox', { name: 'Editing resume.tex' }) as HTMLTextAreaElement;
+
+    fireEvent.change(editor, { target: { value: 'Ada' } });
+    editor.setSelectionRange(0, 3);
+    fireEvent.keyDown(editor, { key: 'b', ctrlKey: true });
+    expect(editor).toHaveValue('\\textbf{Ada}');
+
+    fireEvent.change(editor, { target: { value: 'Ada' } });
+    editor.setSelectionRange(0, 3);
+    fireEvent.keyDown(editor, { key: 'i', ctrlKey: true });
+    expect(editor).toHaveValue('\\textit{Ada}');
+
+    fireEvent.change(editor, { target: { value: 'Ada' } });
+    editor.setSelectionRange(0, 3);
+    fireEvent.keyDown(editor, { key: 'u', ctrlKey: true });
+    expect(editor).toHaveValue('\\underline{Ada}');
+  });
+
   it('formats LaTeX source and PDF preview URLs for the focused editor UI', () => {
     const { container } = render(<pre>{highlightLatexSource('\\documentclass{article}\n% note')}</pre>);
 
@@ -255,6 +370,27 @@ describe('FitCV UI shell', () => {
     expect(container.querySelector('.latex-syntax-brace')?.textContent).toBe('{');
     expect(container.querySelector('.latex-syntax-comment')?.textContent).toBe('% note');
     expect(formatPdfPreviewUrl('blob:fitcv-pdf')).toBe('blob:fitcv-pdf#toolbar=0&navpanes=0&scrollbar=0&view=FitH');
+  });
+
+  it('parses LaTeX logs into actionable diagnostics', () => {
+    const issues = parseLatexDiagnostics({
+      diagnostics: ['! Undefined control sequence.', 'l.12 \\badMacro'],
+      logs: [
+        '(./resume.tex',
+        '(./resume/experience.tex',
+        '! Undefined control sequence.',
+        'l.12 \\badMacro',
+        ')'
+      ]
+    });
+
+    expect(issues[0]).toMatchObject({
+      title: 'Undefined command',
+      filePath: 'resume/experience.tex',
+      line: 12,
+      excerpt: '\\badMacro'
+    });
+    expect(issues[0]?.hint).toContain('LaTeX does not recognize');
   });
 
   it('renders rich text fields as formatted text instead of visible LaTeX commands', () => {

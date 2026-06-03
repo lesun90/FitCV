@@ -13,6 +13,97 @@ export const LATEX_COLORS: Array<{ label: string; name: string; hex: string }> =
 export const formatPdfPreviewUrl = (url: string) =>
   url ? `${url}#toolbar=0&navpanes=0&scrollbar=0&view=FitH` : '';
 
+export type LatexDiagnosticIssue = {
+  id: string;
+  title: string;
+  detail: string;
+  hint: string;
+  filePath?: string;
+  line?: number;
+  excerpt?: string;
+};
+
+export const parseLatexDiagnostics = (input: { diagnostics: string[]; logs: string[] }): LatexDiagnosticIssue[] => {
+  const issues: LatexDiagnosticIssue[] = [];
+  const logs = input.logs.length ? input.logs : input.diagnostics;
+  let activeFile: string | undefined;
+
+  for (let index = 0; index < logs.length; index += 1) {
+    const line = logs[index].trim();
+    const filePath = extractLatexPath(line);
+    if (filePath) activeFile = filePath;
+    if (!line.startsWith('!')) continue;
+
+    const nextLine = logs[index + 1]?.trim() ?? '';
+    const lineMatch = nextLine.match(/^l\.(\d+)\s*(.*)$/);
+    const lineNumber = lineMatch ? Number(lineMatch[1]) : undefined;
+    const excerpt = lineMatch?.[2]?.trim() || undefined;
+    const kind = classifyLatexError(line);
+
+    issues.push({
+      id: `${activeFile ?? 'unknown'}-${lineNumber ?? index}-${line}`,
+      ...kind,
+      detail: line.replace(/^!\s*/, ''),
+      filePath: activeFile,
+      line: lineNumber,
+      excerpt
+    });
+  }
+
+  if (!issues.length && input.diagnostics.length) {
+    const joined = input.diagnostics.join('\n');
+    const lineMatch = joined.match(/l\.(\d+)\s*([^\n]*)/);
+    const first = input.diagnostics.find((item) => item.trim().startsWith('!')) ?? input.diagnostics[0];
+    const kind = classifyLatexError(first);
+    issues.push({
+      id: `diagnostic-${first}`,
+      ...kind,
+      detail: first.replace(/^!\s*/, ''),
+      line: lineMatch ? Number(lineMatch[1]) : undefined,
+      excerpt: lineMatch?.[2]?.trim() || undefined
+    });
+  }
+
+  return issues;
+};
+
+const extractLatexPath = (line: string): string | undefined => {
+  const matches = [...line.matchAll(/\((?:\.\/)?([^()\s]+\.tex)\b/g)];
+  return matches.at(-1)?.[1];
+};
+
+const classifyLatexError = (message: string): Pick<LatexDiagnosticIssue, 'title' | 'hint'> => {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('undefined control sequence')) {
+    return {
+      title: 'Undefined command',
+      hint: 'LaTeX does not recognize this command. Check for a typo, missing package, or command from the wrong template.'
+    };
+  }
+  if (normalized.includes('file') && normalized.includes('not found')) {
+    return {
+      title: 'Missing file or package',
+      hint: 'A referenced file, image, class, style, or package is missing. Check the path or include the required asset.'
+    };
+  }
+  if (normalized.includes('missing }') || normalized.includes('extra }')) {
+    return {
+      title: 'Brace mismatch',
+      hint: 'A command argument is not balanced. Count opening and closing braces near the reported line.'
+    };
+  }
+  if (normalized.includes('runaway argument')) {
+    return {
+      title: 'Unclosed argument',
+      hint: 'LaTeX kept reading because an argument was not closed. Look for a missing brace before this line.'
+    };
+  }
+  return {
+    title: 'LaTeX compile error',
+    hint: 'Start at the reported line, then check the few lines above it. LaTeX often reports the failure just after the real typo.'
+  };
+};
+
 export const highlightLatexSource = (source: string): ReactNode[] => {
   const nodes: ReactNode[] = [];
   const tokenPattern = /(\\[a-zA-Z@]+|\\.|%.*|[{}[\]]|\$+|&)/g;

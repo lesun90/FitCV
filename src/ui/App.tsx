@@ -46,7 +46,8 @@ import type {
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { LatexEditorRoute } from './LatexEditorRoute';
-import { formatPdfPreviewUrl, renderRichLatexText, LATEX_COLORS } from './latexUtils';
+import { formatPdfPreviewUrl, parseLatexDiagnostics, type LatexDiagnosticIssue } from './latexUtils';
+import { WysiwygEditor } from './WysiwygEditor';
 import { downloadBlob, StatusPill } from './shared';
 import { clampSpaceValue, defaultSpaceValue, hasTemplateAdapter, MAX_SPACE_VALUE, MIN_SPACE_VALUE } from '../domain/templateAdapters';
 
@@ -852,7 +853,8 @@ const SummaryEditor = ({ active, onChange }: { active: ResumeRecord; onChange: (
         {highlights.map((item, index) => (
           <div className={`highlight-row${item.hidden ? ' item-hidden' : ''}`} key={item.id}>
             <span className="highlight-num" aria-hidden="true">{index + 1}</span>
-            <RichTextArea ariaLabel="Profile highlight item" value={item.text} rows={2} placeholder="Led a 4-person migration that reduced report generation time by 38%."
+            <WysiwygEditor ariaLabel="Profile highlight item" value={item.text} placeholder="Led a 4-person migration that reduced report generation time by 38%."
+              showToolbar={false}
               onChange={(v) => onChange((r) => updateProfileHighlight(r, index, { text: v }))} />
             <button className="ghost-button item-hide" aria-label={item.hidden ? `Show profile highlight ${index + 1}` : `Hide profile highlight ${index + 1}`}
               onClick={() => onChange((r) => updateProfileHighlight(r, index, { hidden: !item.hidden }))}>
@@ -991,9 +993,8 @@ const FlexSectionEditor = ({ section, onChange, sectionEnvs, entryTypes }: {
                     <strong>— Subsection heading —</strong>
                     <button className="ghost-button danger item-delete" aria-label="Remove heading" onClick={() => removeItem(index)}><Trash2 /></button>
                   </div>
-                  <Field label="Heading text">
-                    <input value={item.text} onChange={(e) => updateItem(index, { ...item, text: e.target.value })} />
-                  </Field>
+                  <WysiwygEditor label="Heading text" value={item.text} showToolbar={false} singleLine={true}
+                    onChange={(v) => updateItem(index, { ...item, text: v })} />
                 </article>
               </div>
             );
@@ -1133,9 +1134,8 @@ const FlexSubSectionEditor = ({ sub, sectionEnvs, entryTypes, onUpdate, onRemove
                     <strong>— Heading —</strong>
                     <button className="ghost-button danger item-delete" aria-label="Remove heading" onClick={() => removeSubItem(index)}><Trash2 /></button>
                   </div>
-                  <Field label="Heading text">
-                    <input value={item.text} onChange={(e) => updateSubItem(index, { ...item, text: e.target.value })} />
-                  </Field>
+                  <WysiwygEditor label="Heading text" value={item.text} showToolbar={false} singleLine={true}
+                    onChange={(v) => updateSubItem(index, { ...item, text: v })} />
                 </article>
               </div>
             );
@@ -1211,9 +1211,8 @@ const FlexEntryEditor = ({ entry, entryTypes, onUpdate, onRemove, onGripDown }: 
       </div>
       {typeDef?.fields.map((fd) => {
         const value = String(entry.fields[fd.id] ?? '');
-        return fd.multiline
-          ? <RichTextArea key={fd.id} label={fd.label} value={value} onChange={(v) => updateField(fd.id, v)} />
-          : <Field key={fd.id} label={fd.label}><input value={value} onChange={(e) => updateField(fd.id, e.target.value)} /></Field>;
+        return <WysiwygEditor key={fd.id} label={fd.label} value={value} onChange={(v) => updateField(fd.id, v)}
+          showToolbar={fd.multiline} singleLine={!fd.multiline} />;
       })}
     </article>
   );
@@ -1221,59 +1220,6 @@ const FlexEntryEditor = ({ entry, entryTypes, onUpdate, onRemove, onGripDown }: 
 
 // --- Shared UI primitives ---
 
-const RichTextArea = ({ label, ariaLabel, value, placeholder, rows = 4, onChange }: {
-  label?: string; ariaLabel?: string; value: string; placeholder?: string; rows?: number; onChange: (value: string) => void;
-}) => {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const preRef = useRef<HTMLPreElement>(null);
-
-  const wrapSelection = (open: string, close: string) => {
-    const el = ref.current;
-    if (!el) return;
-    const { selectionStart: start, selectionEnd: end, value: cur } = el;
-    const selected = cur.slice(start, end);
-    const next = cur.slice(0, start) + open + selected + close + cur.slice(end);
-    onChange(next);
-    requestAnimationFrame(() => {
-      const cursor = selected ? start + open.length + selected.length + close.length : start + open.length;
-      el.setSelectionRange(cursor, cursor);
-      el.focus();
-    });
-  };
-
-  const toolbar = (
-    <div className="rich-toolbar" role="toolbar" aria-label={label ? `Formatting for ${label}` : 'Text formatting'}>
-      <button type="button" className="rich-btn rich-bold" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textbf{', '}'); }} title="Bold"><strong>B</strong></button>
-      <button type="button" className="rich-btn rich-italic" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\textit{', '}'); }} title="Italic"><em>I</em></button>
-      <button type="button" className="rich-btn rich-underline" onMouseDown={(e) => { e.preventDefault(); wrapSelection('\\underline{', '}'); }} title="Underline"><u>U</u></button>
-      <span className="rich-sep" />
-      {LATEX_COLORS.map((color) => (
-        <button key={color.name} type="button" className="rich-color-swatch" style={{ background: color.hex }}
-          onMouseDown={(e) => { e.preventDefault(); wrapSelection(`\\textcolor{${color.name}}{`, '}'); }} title={color.label} />
-      ))}
-    </div>
-  );
-
-  const inner = (
-    <div className="rich-wrap">
-      {toolbar}
-      <div className="rich-text-frame">
-        <pre className="rich-text-highlight" ref={preRef} aria-hidden="true">{renderRichLatexText(value)}</pre>
-        <textarea ref={ref} rows={rows} value={value} placeholder={placeholder} aria-label={ariaLabel}
-          onChange={(e) => onChange(e.target.value)}
-          onScroll={(e) => { if (preRef.current) preRef.current.style.transform = `translateY(-${e.currentTarget.scrollTop}px)`; }}
-        />
-      </div>
-    </div>
-  );
-
-  if (!label) return inner;
-  return <label className="stacked-field">{label}{inner}</label>;
-};
-
-const Field = ({ label, children }: { label: string; children: ReactNode }) => (
-  <label className="field-row"><span className="field-label">{label}</span>{children}</label>
-);
 
 type SectionEditorOnChange = (recipe: (r: ResumeRecord) => ResumeRecord) => void;
 
@@ -1332,6 +1278,8 @@ const PreviewPanel = ({ activeTemplateName, artifact, busy, cleanCompile, pdfUrl
 }) => {
   const [showLogs, setShowLogs] = useState(false);
   const formattedUrl = pdfUrl ? formatPdfPreviewUrl(pdfUrl) : '';
+  const compileIssues = artifact?.status === 'failed' ? parseLatexDiagnostics({ diagnostics: artifact.logs, logs: artifact.logs }) : [];
+  const previewIssue = compileIssues[0];
 
   return (
     <aside className="preview-pane" aria-label="Browser PDF preview">
@@ -1345,10 +1293,19 @@ const PreviewPanel = ({ activeTemplateName, artifact, busy, cleanCompile, pdfUrl
           {busy && <div className="latex-recompile-overlay" aria-live="polite"><Loader2 className="latex-spin" aria-hidden="true" /><span>Recompiling…</span></div>}
         </div>
       ) : (
-        <div className="latex-paper-placeholder">
-          <FileCheck2 />
-          <h2>{busy ? 'Compiling…' : 'No preview yet'}</h2>
-          {busy ? <Loader2 className="latex-spin" aria-hidden="true" /> : <p>Hit <strong>Compile</strong> or enable <strong>Auto</strong> to generate a live PDF preview.</p>}
+        <div className={previewIssue ? 'latex-paper-placeholder failed' : 'latex-paper-placeholder'} role={previewIssue ? 'alert' : undefined}>
+          {previewIssue ? <AlertCircle /> : <FileCheck2 />}
+          <h2>{previewIssue ? 'Compile needs attention' : busy ? 'Compiling…' : 'No preview yet'}</h2>
+          {busy ? (
+            <Loader2 className="latex-spin" aria-hidden="true" />
+          ) : previewIssue ? (
+            <>
+              <p><strong>{previewIssue.title}</strong>{previewIssue.filePath ? ` in ${formatIssueLocation(previewIssue)}` : ''}</p>
+              <p>{previewIssue.hint}</p>
+            </>
+          ) : (
+            <p>Hit <strong>Compile</strong> or enable <strong>Auto</strong> to generate a live PDF preview.</p>
+          )}
         </div>
       )}
       <div className={`log-drawer${showLogs ? ' open' : ''}`}>
@@ -1356,6 +1313,13 @@ const PreviewPanel = ({ activeTemplateName, artifact, busy, cleanCompile, pdfUrl
           <div className="log-drawer-body">
             {busy ? (
               <div className="log-compiling-msg" aria-live="polite"><Loader2 className="latex-spin" aria-hidden="true" /><span>Compiling in browser…</span></div>
+            ) : compileIssues.length ? (
+              <>
+                <div className="latex-diagnostics main-editor-diagnostics" aria-label="Compile issues">
+                  {compileIssues.map((issue) => <CompileIssueCard key={issue.id} issue={issue} />)}
+                </div>
+                <pre>{artifact?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
+              </>
             ) : (
               <pre>{artifact?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
             )}
@@ -1373,6 +1337,23 @@ const PreviewPanel = ({ activeTemplateName, artifact, busy, cleanCompile, pdfUrl
       </div>
     </aside>
   );
+};
+
+const CompileIssueCard = ({ issue }: { issue: LatexDiagnosticIssue }) => (
+  <div className="latex-diagnostic-card static" role="note">
+    <AlertCircle aria-hidden="true" />
+    <span>
+      <strong>{issue.title}</strong>
+      <small>{formatIssueLocation(issue)}</small>
+      <em>{issue.hint}</em>
+      {issue.excerpt && <code>{issue.excerpt}</code>}
+    </span>
+  </div>
+);
+
+const formatIssueLocation = (issue: LatexDiagnosticIssue) => {
+  const file = issue.filePath ?? 'Compiler log';
+  return issue.line ? `${file}:${issue.line}` : file;
 };
 
 // --- Mini paper ---

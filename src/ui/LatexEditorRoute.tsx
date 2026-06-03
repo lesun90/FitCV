@@ -33,7 +33,7 @@ import {
   type BundledLatexProject,
   type BundledLatexProjectSummary
 } from '../services/latexTemplates';
-import { formatPdfPreviewUrl, highlightLatexSource, LATEX_COLORS } from './latexUtils';
+import { formatPdfPreviewUrl, highlightLatexSource, LATEX_COLORS, parseLatexDiagnostics, type LatexDiagnosticIssue } from './latexUtils';
 
 type LatexProjectState = Omit<BundledLatexProject, 'readOnly'> & {
   readOnly: boolean;
@@ -41,6 +41,19 @@ type LatexProjectState = Omit<BundledLatexProject, 'readOnly'> & {
   mainFile: string;
   workingFiles: LatexProjectFile[];
 };
+
+type EditorSnapshot = {
+  contents: string;
+  selectionStart: number;
+  selectionEnd: number;
+};
+
+type EditorHistory = {
+  past: EditorSnapshot[];
+  future: EditorSnapshot[];
+};
+
+const MAX_EDITOR_HISTORY = 100;
 
 export const LatexEditorRoute = () => {
   const [project, setProject] = useState<LatexProjectState>();
@@ -51,6 +64,7 @@ export const LatexEditorRoute = () => {
   const [cacheState, setCacheState] = useState<LatexCompilerCacheState>('not-ready');
   const [showLogs, setShowLogs] = useState(false);
   const [autoCompile, setAutoCompile] = useState(false);
+  const [focusLine, setFocusLine] = useState<number>();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const compileGenRef = useRef(0);
   const bundledProjects = useMemo(() => listBundledLatexProjects(), []);
@@ -63,6 +77,9 @@ export const LatexEditorRoute = () => {
   const textFiles = project?.workingFiles.filter((file): file is Extract<LatexProjectFile, { kind: 'text' }> => file.kind === 'text') ?? [];
   const tree = useMemo(() => buildLatexFileTree(project?.workingFiles ?? []), [project?.workingFiles]);
   const latexPdfUrl = useMemo(() => (compileResult?.pdfBlob ? URL.createObjectURL(compileResult.pdfBlob) : ''), [compileResult?.pdfBlob]);
+  const previewIssue = compileResult?.status === 'failed'
+    ? parseLatexDiagnostics({ diagnostics: compileResult.diagnostics, logs: compileResult.logs })[0]
+    : undefined;
 
   const openBundledProject = async (id: string) => {
     try {
@@ -205,6 +222,7 @@ export const LatexEditorRoute = () => {
                 contents={activeFile.contents}
                 readOnly={project.readOnly}
                 activePath={activeFile.path}
+                focusLine={focusLine}
                 onChange={updateActiveFile}
               />
             ) : (
@@ -229,14 +247,35 @@ export const LatexEditorRoute = () => {
                   )}
                 </div>
               ) : (
-                <div className="latex-paper-placeholder">
-                  <Braces />
-                  <h2>Ready for first compile</h2>
-                  <p>Compile runs through BusyTeX with the current in-memory project map. If runtime assets are missing, the logs will show the asset path to configure.</p>
+                <div className={previewIssue ? 'latex-paper-placeholder failed' : 'latex-paper-placeholder'} role={previewIssue ? 'alert' : undefined}>
+                  {previewIssue ? <AlertTriangle /> : <Braces />}
+                  <h2>{previewIssue ? 'Compile needs attention' : 'Ready for first compile'}</h2>
+                  {previewIssue ? (
+                    <>
+                      <p><strong>{previewIssue.title}</strong>{previewIssue.filePath ? ` in ${formatIssueLocation(previewIssue)}` : ''}</p>
+                      <p>{previewIssue.hint}</p>
+                    </>
+                  ) : (
+                    <p>Compile runs through BusyTeX with the current in-memory project map. If runtime assets are missing, the logs will show the asset path to configure.</p>
+                  )}
                 </div>
               )}
             </div>
-            <CompilerStatusPanel result={compileResult} busy={busy} cacheState={cacheState} showLogs={showLogs} onToggleLogs={() => setShowLogs((v) => !v)} />
+            <CompilerStatusPanel
+              result={compileResult}
+              busy={busy}
+              cacheState={cacheState}
+              showLogs={showLogs}
+              onToggleLogs={() => setShowLogs((v) => !v)}
+              onOpenIssue={(issue) => {
+                if (!issue.filePath) return;
+                setProject((prev) => {
+                  if (!prev || !prev.workingFiles.some((file) => file.path === issue.filePath)) return prev;
+                  return { ...prev, activePath: issue.filePath! };
+                });
+                setFocusLine(issue.line);
+              }}
+            />
           </aside>
         </section>
       )}
@@ -247,16 +286,102 @@ export const LatexEditorRoute = () => {
 const LatexCodeEditor = ({
   activePath,
   contents,
+  focusLine,
   readOnly,
   onChange
 }: {
   activePath: string;
   contents: string;
+  focusLine?: number;
   readOnly: boolean;
   onChange: (contents: string) => void;
 }) => {
   const highlightRef = useRef<HTMLPreElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [history, setHistory] = useState<EditorHistory>({ past: [], future: [] });
+
+  useEffect(() => {
+    setHistory({ past: [], future: [] });
+  }, [activePath]);
+
+  useEffect(() => {
+    if (!focusLine || focusLine < 1) return;
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const lines = contents.split('\n');
+      const targetLine = Math.min(focusLine, lines.length);
+      const position = lines.slice(0, targetLine - 1).reduce((sum, line) => sum + line.length + 1, 0);
+      el.focus();
+      el.setSelectionRange(position, Math.min(position + lines[targetLine - 1].length, contents.length));
+      el.scrollTop = Math.max(0, (targetLine - 4) * 18);
+    });
+  }, [activePath, contents, focusLine]);
+
+  const restoreSelection = (snapshot: EditorSnapshot) => {
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      const start = Math.min(snapshot.selectionStart, el.value.length);
+      const end = Math.min(snapshot.selectionEnd, el.value.length);
+      el.setSelectionRange(start, end);
+      el.focus();
+    });
+  };
+
+  const snapshot = (sourceContents = contents): EditorSnapshot => {
+    const el = textareaRef.current;
+    if (!el) {
+      return {
+        contents: sourceContents,
+        selectionStart: sourceContents.length,
+        selectionEnd: sourceContents.length
+      };
+    }
+    return {
+      contents: sourceContents,
+      selectionStart: Math.min(el.selectionStart, sourceContents.length),
+      selectionEnd: Math.min(el.selectionEnd, sourceContents.length)
+    };
+  };
+
+  const recordUndo = (previous: EditorSnapshot) => {
+    setHistory((current) => ({
+      past: [...current.past.slice(-(MAX_EDITOR_HISTORY - 1)), previous],
+      future: []
+    }));
+  };
+
+  const applyHistorySnapshot = (next: EditorSnapshot) => {
+    onChange(next.contents);
+    restoreSelection(next);
+  };
+
+  const undo = () => {
+    const previous = history.past.at(-1);
+    if (!previous) return;
+    setHistory({
+      past: history.past.slice(0, -1),
+      future: [snapshot(), ...history.future].slice(0, MAX_EDITOR_HISTORY)
+    });
+    applyHistorySnapshot(previous);
+  };
+
+  const redo = () => {
+    const next = history.future[0];
+    if (!next) return;
+    setHistory({
+      past: [...history.past.slice(-(MAX_EDITOR_HISTORY - 1)), snapshot()],
+      future: history.future.slice(1)
+    });
+    applyHistorySnapshot(next);
+  };
+
+  const changeContents = (next: string, previous = snapshot()) => {
+    if (readOnly) return;
+    recordUndo(previous);
+    onChange(next);
+  };
 
   const wrapSelection = (open: string, close: string) => {
     const el = textareaRef.current;
@@ -264,7 +389,7 @@ const LatexCodeEditor = ({
     const { selectionStart: start, selectionEnd: end, value: cur } = el;
     const selected = cur.slice(start, end);
     const next = cur.slice(0, start) + open + selected + close + cur.slice(end);
-    onChange(next);
+    changeContents(next, { contents, selectionStart: start, selectionEnd: end });
     requestAnimationFrame(() => {
       const cursor = selected
         ? start + open.length + selected.length + close.length
@@ -272,6 +397,29 @@ const LatexCodeEditor = ({
       el.setSelectionRange(cursor, cursor);
       el.focus();
     });
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+    const key = event.key.toLowerCase();
+    const isUndo = key === 'z' && !event.shiftKey;
+    const isRedo = key === 'y' || (key === 'z' && event.shiftKey);
+    const isFormatting = key === 'b' || key === 'i' || key === 'u';
+    if (!isUndo && !isRedo && !isFormatting) return;
+    event.preventDefault();
+    if (isUndo) {
+      undo();
+    } else if (isRedo) {
+      redo();
+    } else if (key === 'b') {
+      wrapSelection('\\textbf{', '}');
+    } else if (key === 'i') {
+      wrapSelection('\\textit{', '}');
+    } else if (key === 'u') {
+      wrapSelection('\\underline{', '}');
+    } else {
+      return;
+    }
   };
 
   return (
@@ -305,10 +453,11 @@ const LatexCodeEditor = ({
           spellCheck={false}
           onScroll={(event) => {
             if (!highlightRef.current) return;
-            highlightRef.current.scrollTop = event.currentTarget.scrollTop;
-            highlightRef.current.scrollLeft = event.currentTarget.scrollLeft;
+            const { scrollTop, scrollLeft } = event.currentTarget;
+            highlightRef.current.style.transform = `translate(-${scrollLeft}px, -${scrollTop}px)`;
           }}
-          onChange={(event) => onChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          onChange={(event) => changeContents(event.target.value, snapshot(contents))}
           aria-label={`Editing ${activePath}`}
         />
       </div>
@@ -406,16 +555,19 @@ const CompilerStatusPanel = ({
   busy,
   cacheState,
   showLogs,
+  onOpenIssue,
   onToggleLogs
 }: {
   result?: LatexCompileResult;
   busy: string;
   cacheState: LatexCompilerCacheState;
   showLogs: boolean;
+  onOpenIssue: (issue: LatexDiagnosticIssue) => void;
   onToggleLogs: () => void;
 }) => {
   const [showFullLog, setShowFullLog] = useState(false);
   const hasDiagnostics = (result?.diagnostics.length ?? 0) > 0;
+  const issues = result ? parseLatexDiagnostics({ diagnostics: result.diagnostics, logs: result.logs }) : [];
   const statusLabel = busy
     ? 'Compiling...'
     : result
@@ -463,8 +615,29 @@ const CompilerStatusPanel = ({
           ) : (
             <>
               {hasDiagnostics && !showFullLog ? (
-                <div className="latex-diagnostics">
-                  {result!.diagnostics.map((d) => <p key={d}>{d}</p>)}
+                <div className="latex-diagnostics" aria-label="Compile issues">
+                  {issues.length ? (
+                    issues.map((issue) => (
+                      <button
+                        key={issue.id}
+                        className="latex-diagnostic-card"
+                        type="button"
+                        disabled={!issue.filePath}
+                        onClick={() => onOpenIssue(issue)}
+                        aria-label={issue.filePath ? `Open ${issue.filePath}${issue.line ? ` line ${issue.line}` : ''}` : `Review ${issue.title}`}
+                      >
+                        <AlertTriangle aria-hidden="true" />
+                        <span>
+                          <strong>{issue.title}</strong>
+                          <small>{formatIssueLocation(issue)}</small>
+                          <em>{issue.hint}</em>
+                          {issue.excerpt && <code>{issue.excerpt}</code>}
+                        </span>
+                      </button>
+                    ))
+                  ) : (
+                    result!.diagnostics.map((d) => <p key={d}>{d}</p>)
+                  )}
                 </div>
               ) : (
                 <pre className="latex-log-output">{result?.logs.join('\n') ?? 'No compile has run yet.'}</pre>
@@ -483,3 +656,8 @@ const CompilerStatusPanel = ({
 };
 
 const formatCacheState = (state: string) => state.replaceAll('-', ' ');
+
+const formatIssueLocation = (issue: LatexDiagnosticIssue) => {
+  const file = issue.filePath ?? 'Compiler log';
+  return issue.line ? `${file}:${issue.line}` : file;
+};
