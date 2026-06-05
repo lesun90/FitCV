@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAiAssistMessages,
+  buildFitToJdMessages,
+  buildJdMatchMessages,
   clearSessionApiKey,
+  isAiConfigured,
+  requestFitToJdDraft,
+  requestJdMatchReport,
+  requestReadinessReport,
   requestAiSuggestion,
   setSessionApiKey,
   type AiProviderSettings
@@ -119,5 +125,143 @@ describe('AI provider service', () => {
       fieldLabel: 'Summary',
       text: 'Built reliable autonomy systems.'
     })).rejects.toThrow('AI request limit reached. Try again later or check your provider quota.');
+  });
+
+  it('isAiConfigured returns false when endpoint or model is blank', () => {
+    expect(isAiConfigured(undefined)).toBe(false);
+    expect(isAiConfigured({ ...testSettings, endpointUrl: '  ' })).toBe(false);
+    expect(isAiConfigured({ ...testSettings, model: '' })).toBe(false);
+    expect(isAiConfigured(testSettings)).toBe(true);
+  });
+
+  it('throws when the provider returns no suggestion content', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: null } }]
+    }), { status: 200 })));
+
+    await expect(requestAiSuggestion(testSettings, {
+      action: 'rephrase',
+      fieldLabel: 'Summary',
+      text: 'Built reliable systems.'
+    })).rejects.toThrow('AI provider returned no suggestion.');
+  });
+
+  it('requests CV quality readiness as a percent with reasons', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        readinessPercent: 76,
+        reasons: [
+          { id: 'generic-bullets', severity: 'medium', message: 'Several bullets describe duties instead of outcomes.', impact: -12 }
+        ]
+      }) } }]
+    }), { status: 200 })));
+
+    const report = await requestReadinessReport(testSettings, {
+      kind: 'cv-quality',
+      resumeTitle: 'Ada Resume',
+      resumeText: 'Ada Lovelace\nBuilt analytical systems.'
+    });
+
+    expect(report).toEqual({
+      readinessPercent: 76,
+      reasons: [
+        { id: 'generic-bullets', severity: 'medium', message: 'Several bullets describe duties instead of outcomes.', impact: -12 }
+      ]
+    });
+  });
+
+  it('builds fit-to-JD prompts that return proposed edits separate from scoring', () => {
+    const messages = buildFitToJdMessages({
+      resumeTitle: 'Ada Resume',
+      resumeText: 'Ada Lovelace\nBuilt browser tools.',
+      jobDescriptionText: 'Frontend engineer building accessible tools.'
+    });
+    const serialized = JSON.stringify(messages);
+
+    expect(serialized).toContain('Return strict JSON with key: proposedChanges');
+    expect(serialized).toContain('Do not return a JD Match score');
+    expect(serialized).toContain('Do not invent facts');
+    expect(serialized).toContain('Frontend engineer building accessible tools.');
+  });
+
+  it('requests structured fit-to-JD proposed changes with risk flags', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        proposedChanges: [{
+          targetField: 'content.summary',
+          before: 'Built browser tools.',
+          after: 'Built accessible browser tools.',
+          rationale: 'Matches the accessibility requirement.',
+          jdEvidence: 'accessible tools',
+          riskFlags: ['verify-scope']
+        }]
+      }) } }]
+    }), { status: 200 })));
+
+    const result = await requestFitToJdDraft(testSettings, {
+      resumeTitle: 'Ada Resume',
+      resumeText: 'Ada Lovelace\nBuilt browser tools.',
+      jobDescriptionText: 'Frontend engineer building accessible tools.'
+    });
+
+    expect(result.proposedChanges).toEqual([{
+      targetField: 'content.summary',
+      before: 'Built browser tools.',
+      after: 'Built accessible browser tools.',
+      rationale: 'Matches the accessibility requirement.',
+      jdEvidence: 'accessible tools',
+      riskFlags: ['verify-scope']
+    }]);
+  });
+
+  it('rejects malformed fit-to-JD output before persistence', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({ proposedChanges: [{ targetField: 'notes', after: '' }] }) } }]
+    }), { status: 200 })));
+
+    await expect(requestFitToJdDraft(testSettings, {
+      resumeTitle: 'Ada Resume',
+      resumeText: 'Ada Lovelace',
+      jobDescriptionText: 'Frontend engineer'
+    })).rejects.toThrow('AI provider returned no valid fit-to-JD changes.');
+  });
+
+  it('builds JD Match prompts without asking for proposed edits', () => {
+    const messages = buildJdMatchMessages({
+      resumeTitle: 'Ada fitted CV',
+      resumeText: 'Ada Lovelace\nBuilt accessible browser tools.',
+      jobDescriptionText: 'Frontend engineer building accessible tools.'
+    });
+    const serialized = JSON.stringify(messages);
+
+    expect(serialized).toContain('Return strict JSON with keys: readinessPercent, reasons');
+    expect(serialized).toContain('Do not return proposed edits');
+    expect(serialized).toContain('JD Match Readiness');
+  });
+
+  it('requests AI-assisted JD Match readiness reports independently from fit proposals', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        readinessPercent: 88,
+        reasons: [
+          { id: 'keyword-coverage', severity: 'info', field: 'content.summary', message: 'Strong accessibility keyword coverage.', impact: 0 },
+          { id: 'missing-evidence', severity: 'medium', message: 'No explicit React evidence found.', impact: -8 }
+        ]
+      }) } }]
+    }), { status: 200 })));
+
+    const result = await requestJdMatchReport(testSettings, {
+      resumeTitle: 'Ada fitted CV',
+      resumeText: 'Ada Lovelace\nBuilt accessible browser tools.',
+      jobDescriptionText: 'Frontend engineer building accessible React tools.'
+    });
+
+    expect(result).toEqual({
+      readinessPercent: 88,
+      reasons: [
+        { id: 'keyword-coverage', severity: 'info', field: 'content.summary', message: 'Strong accessibility keyword coverage.', impact: 0 },
+        { id: 'missing-evidence', severity: 'medium', message: 'No explicit React evidence found.', impact: -8 }
+      ]
+    });
   });
 });

@@ -3,10 +3,9 @@ import { getTemplate, templates } from './templates';
 import { createResume } from './resume';
 
 describe('template registry', () => {
-  it('ships three templates including the adapter-backed Awesome CV', () => {
-    expect(templates).toHaveLength(3);
-    expect(new Set(templates.map((t) => t.id)).size).toBe(3);
-    expect(templates.map((t) => t.id)).toContain('awesome-cv');
+  it('ships one template: the adapter-backed Awesome CV', () => {
+    expect(templates).toHaveLength(1);
+    expect(templates[0].id).toBe('awesome-cv');
   });
 
   it('every template has required base fields', () => {
@@ -16,13 +15,6 @@ describe('template registry', () => {
       expect(template.browserCompatibility.engine).toBeTruthy();
       expect(template.fixture.sampleResumeId).toBeTruthy();
     }
-  });
-
-  it('awesome-cv declares a full adapter contract', () => {
-    const template = getTemplate('awesome-cv');
-    expect(template.pinnedSections).toContain('summary');
-    expect(template.sectionEnvs?.length).toBeGreaterThan(0);
-    expect(template.entryTypes?.length).toBeGreaterThan(0);
   });
 
   it('awesome-cv entryType fields match expected shape', () => {
@@ -41,13 +33,6 @@ describe('template registry', () => {
     expect(experience?.allowsSubsectionHeading).toBe(true);
     const projects = template.sectionEnvs?.find((e) => e.id === 'projects');
     expect(projects?.allowedEntryTypeIds).toContain('projectentry');
-  });
-
-  it('classic-ats and modern-compact have no adapter contract fields', () => {
-    const classicAts = getTemplate('classic-ats');
-    expect(classicAts.pinnedSections).toBeUndefined();
-    expect(classicAts.sectionEnvs).toBeUndefined();
-    expect(classicAts.entryTypes).toBeUndefined();
   });
 
   it('createResume produces a resume compatible with the template', () => {

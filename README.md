@@ -74,6 +74,10 @@ Clearing Docker volumes does not clear resume data because FitCV stores working 
 - Browser-only PDF generation, preview, compile logs, stale state, and PDF export.
 - Deterministic ATS/readability checks with field references.
 
+## ATS Readiness
+
+FitCV documents the deterministic ATS Readiness methodology in [`docs/ats-readiness.md`](docs/ats-readiness.md). It explains the current `ats-deterministic-v2` rules, weights, reason IDs, and limits.
+
 ## Verification
 
 ```bash

@@ -2,7 +2,7 @@ import type { EntryTypeDefinition, SectionEnvDefinition, SectionKey, TemplateId 
 import { awesomeCvTemplate } from '../latex-templates/awesome-resume/adapter';
 
 export interface TemplateBrowserCompatibility {
-  engine: 'pdf-lib' | 'xelatex' | 'pdflatex' | 'lualatex';
+  engine: 'xelatex' | 'pdflatex' | 'lualatex';
   notes: string[];
 }
 
@@ -23,20 +23,6 @@ export interface TemplateRegistryEntry {
 }
 
 export const templates: TemplateRegistryEntry[] = [
-  {
-    id: 'classic-ats',
-    name: 'Classic ATS',
-    description: 'A sober one-column layout with standard labels. Generated client-side via the PDF pipeline.',
-    browserCompatibility: { engine: 'pdf-lib', notes: ['Generated client-side through the structured resume PDF pipeline.'] },
-    fixture: { sampleResumeId: 'sample-classic-ats', expectedText: ['Ada Lovelace'] },
-  },
-  {
-    id: 'modern-compact',
-    name: 'Modern Compact',
-    description: 'A tighter layout for concise resumes. Generated client-side via the PDF pipeline.',
-    browserCompatibility: { engine: 'pdf-lib', notes: ['Generated client-side through the structured resume PDF pipeline.'] },
-    fixture: { sampleResumeId: 'sample-modern-compact', expectedText: ['Ada Lovelace'] },
-  },
   awesomeCvTemplate,
 ];
 

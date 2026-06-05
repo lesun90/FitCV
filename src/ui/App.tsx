@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import {
   AlertCircle,
+  ArrowRight,
   CheckCircle2,
   ChevronLeft,
   ChevronUp,
@@ -18,14 +19,15 @@ import {
   Pencil,
   Plus,
   RotateCw,
-  ShieldCheck,
   Terminal,
   Trash2,
   Upload,
+  X,
   Zap
 } from 'lucide-react';
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
-import { runAtsChecks } from '../domain/checks';
+import { buildAtsReadinessReport } from '../domain/checks';
+import { applyFittedCvChange, createFittedCvDraft, fittedCvHasUnreviewedChanges, markFittedCvChangeReviewed } from '../domain/fittedCv';
 import { clearReviewMarkersForField, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, starterResume, switchTemplate, touchResume } from '../domain/resume';
 import { templates, getTemplate } from '../domain/templates';
 import type {
@@ -36,15 +38,18 @@ import type {
   FlexEntry,
   FlexSection,
   FlexSubSection,
+  JobDescriptionRecord,
   LayoutModule,
   ProfileFieldKey,
   ProfileHighlightItem,
   ResumeRecord,
+  ScoringReportRecord,
   SectionEnvDefinition,
   TemplateId,
 } from '../domain/types';
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
+import { requestFitToJdDraft, requestJdMatchReport, requestReadinessReport } from '../services/aiProvider';
 import { LatexEditorRoute } from './LatexEditorRoute';
 import { AiAssistButton, AiSettingsButton } from './AiAssist';
 import { formatPdfPreviewUrl, parseLatexDiagnostics, type LatexDiagnosticIssue } from './latexUtils';
@@ -59,6 +64,34 @@ const isHeading = (item: FlexEntry | FlexSubSection | CvSubsectionHeading): item
 
 const isSubSection = (item: FlexEntry | FlexSubSection | CvSubsectionHeading): item is FlexSubSection =>
   'environment' in item;
+
+const fittedCvToResume = (fittedCv: FittedCvRecord): ResumeRecord => ({
+  id: fittedCv.id,
+  schemaVersion: 1,
+  title: fittedCv.title,
+  activeTemplateId: fittedCv.activeTemplateId,
+  sectionOrder: ['summary'],
+  hiddenSections: [],
+  templateLayouts: fittedCv.templateLayouts,
+  content: fittedCv.content,
+  templateSettings: fittedCv.templateSettings,
+  reviewMarkers: [],
+  importNotes: [],
+  createdAt: fittedCv.createdAt,
+  updatedAt: fittedCv.updatedAt,
+  version: fittedCv.version,
+});
+
+const resumeToFittedCv = (current: FittedCvRecord, resume: ResumeRecord): FittedCvRecord => ({
+  ...current,
+  title: resume.title,
+  activeTemplateId: resume.activeTemplateId,
+  templateLayouts: resume.templateLayouts,
+  templateSettings: resume.templateSettings,
+  content: resume.content,
+  updatedAt: resume.updatedAt,
+  version: resume.version,
+});
 
 // --- Label helpers ---
 
@@ -97,30 +130,46 @@ export const App = () => {
   const [loaded, setLoaded] = useState(false);
   const [resumes, setResumes] = useState<ResumeRecord[]>([]);
   const [fittedCvs, setFittedCvs] = useState<FittedCvRecord[]>([]);
+  const [jobDescriptions, setJobDescriptions] = useState<JobDescriptionRecord[]>([]);
+  const [readinessReports, setReadinessReports] = useState<ScoringReportRecord[]>([]);
   const [activeId, setActiveId] = useState<string>();
+  const [activeFittedId, setActiveFittedId] = useState<string>();
   const [artifact, setArtifact] = useState<CompileArtifact>();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [mode, setMode] = useState<ViewMode>('dashboard');
   const [autoCompile, setAutoCompile] = useState(false);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void; onCancel: () => void; danger?: boolean } | null>(null);
   const active = resumes.find((resume) => resume.id === activeId) ?? resumes[0];
+  const activeFittedCv = activeFittedId ? fittedCvs.find((cv) => cv.id === activeFittedId) : undefined;
+  const editorResume = activeFittedCv ? fittedCvToResume(activeFittedCv) : active;
+  const sourceResume = activeFittedCv ? resumes.find((resume) => resume.id === activeFittedCv.sourceResumeId) : undefined;
+  const editorTargetType = activeFittedCv ? 'fitted-cv' as const : 'resume' as const;
+  const editorTargetId = activeFittedCv?.id ?? active?.id;
+  const activeJobDescription = activeFittedCv?.jobDescriptionId
+    ? jobDescriptions.find((jobDescription) => jobDescription.id === activeFittedCv.jobDescriptionId)
+    : undefined;
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const compileGenRef = useRef(0);
-  const activeRef = useRef(active);
-  activeRef.current = active;
+  const activeRef = useRef(editorResume);
+  activeRef.current = editorResume;
 
   useEffect(() => {
     void hydrate();
   }, []);
 
   const hydrate = async () => {
-    const [stored, pref, storedFittedCvs] = await Promise.all([
+    const [stored, pref, storedFittedCvs, storedJobDescriptions, storedReadinessReports] = await Promise.all([
       storage.listResumes(),
       storage.getPreference(),
       storage.listFittedCvs(),
+      storage.listJobDescriptions(),
+      storage.listScoringReports(),
     ]);
     setFittedCvs(storedFittedCvs);
+    setJobDescriptions(storedJobDescriptions);
+    setReadinessReports(storedReadinessReports);
     if (stored.length === 0) {
       if (!pref?.seededOnce) {
         const seed = sampleResume();
@@ -143,24 +192,221 @@ export const App = () => {
     await storage.saveResume(resume);
     setResumes((current) => [resume, ...current.filter((item) => item.id !== resume.id)]);
     setActiveId(resume.id);
+    setActiveFittedId(undefined);
     if (artifact?.resumeId === resume.id && artifact.resumeVersion !== resume.version) {
       setArtifact({ ...artifact, status: 'stale' });
     }
   };
 
-  const updateActive = (recipe: (resume: ResumeRecord) => ResumeRecord) => {
-    if (!active) return;
-    void save(recipe(structuredClone(active)));
+  const saveFitted = async (fittedCv: FittedCvRecord) => {
+    activeRef.current = fittedCvToResume(fittedCv);
+    await storage.saveFittedCv(fittedCv);
+    setFittedCvs((current) => [fittedCv, ...current.filter((item) => item.id !== fittedCv.id)]);
+    setActiveId(fittedCv.sourceResumeId);
+    setActiveFittedId(fittedCv.id);
+    if (artifact?.resumeId === fittedCv.id && artifact.resumeVersion !== fittedCv.version) {
+      setArtifact({ ...artifact, status: 'stale' });
+    }
   };
 
-  const checks = useMemo(() => (active ? runAtsChecks(active) : []), [active]);
-  const activeTemplate = active ? templates.find((template) => template.id === active.activeTemplateId) : undefined;
+  const updateActive = (recipe: (resume: ResumeRecord) => ResumeRecord) => {
+    if (!editorResume) return;
+    const next = recipe(structuredClone(editorResume));
+    if (activeFittedCv) {
+      void saveFitted(resumeToFittedCv(activeFittedCv, next));
+      return;
+    }
+    void save(next);
+  };
+
+  const atsReadiness = useMemo(() => (
+    editorResume
+      ? buildAtsReadinessReport(editorResume, {
+        generatedText: artifact?.resumeId === editorResume.id && artifact.resumeVersion === editorResume.version ? artifact.generatedText : undefined
+      })
+      : undefined
+  ), [editorResume, artifact]);
+  const cvQualityReadiness = useMemo(() => (
+    editorTargetId ? readinessReports.find((report) =>
+      report.kind === 'cv-quality'
+      && (report.targetType ?? 'resume') === editorTargetType
+      && (report.targetId ?? report.resumeId) === editorTargetId
+    ) : undefined
+  ), [editorTargetId, editorTargetType, readinessReports]);
+  const jdMatchReadiness = useMemo(() => (
+    activeFittedCv ? readinessReports.find((report) =>
+      report.kind === 'jd-match'
+      && (report.targetType ?? 'resume') === 'fitted-cv'
+      && (report.targetId ?? report.resumeId) === activeFittedCv.id
+      && (report.jobDescriptionId ?? '') === (activeFittedCv.jobDescriptionId ?? '')
+    ) : undefined
+  ), [activeFittedCv, readinessReports]);
+  const hasJobDescription = Boolean(activeFittedCv?.jobDescriptionId);
+  const activeTemplate = editorResume ? templates.find((template) => template.id === editorResume.activeTemplateId) : undefined;
   const pdfUrl = useMemo(() => (
     artifact?.pdfBlob && typeof URL.createObjectURL === 'function' ? URL.createObjectURL(artifact.pdfBlob) : ''
   ), [artifact?.pdfBlob]);
-  const reviewCount = active?.reviewMarkers.filter((marker) => marker.needsReview).length ?? 0;
-  const warningCount = checks.filter((check) => check.status !== 'pass').length;
-  const cleanCompile = artifact?.status === 'clean' && artifact.resumeVersion === active?.version;
+  const reviewCount = editorResume?.reviewMarkers.filter((marker) => marker.needsReview).length ?? 0;
+  const dashboardReviewCount = useMemo(
+    () => resumes.reduce((total, resume) => total + resume.reviewMarkers.filter((marker) => marker.needsReview).length, 0),
+    [resumes]
+  );
+  const cleanCompile = artifact?.status === 'clean' && artifact.resumeVersion === editorResume?.version;
+  const unreviewedFitChangeCount = activeFittedCv?.proposedChanges.filter((change) => change.status === 'pending').length ?? 0;
+  const exportBlocked = Boolean(activeFittedCv && fittedCvHasUnreviewedChanges(activeFittedCv));
+
+  const saveReadinessReport = async (report: ScoringReportRecord) => {
+    await storage.saveScoringReport(report);
+    const next = await storage.listScoringReports();
+    setReadinessReports(next);
+  };
+
+  const runAtsReadiness = async () => {
+    if (!activeRef.current) return;
+    const report = buildAtsReadinessReport(activeRef.current, {
+      generatedText: artifact?.resumeId === activeRef.current.id && artifact.resumeVersion === activeRef.current.version ? artifact.generatedText : undefined
+    });
+    await saveReadinessReport({
+      ...report,
+      targetType: editorTargetType,
+      targetId: activeRef.current.id,
+    });
+  };
+
+  const runCvQualityReadiness = async () => {
+    const target = activeRef.current;
+    if (!target) return;
+    const settings = await storage.getProviderSettings();
+    if (!settings?.endpointUrl.trim() || !settings.model.trim()) {
+      setError('AI settings are required before running CV Quality Readiness.');
+      return;
+    }
+    if (!await confirmAsync('Run CV Quality Readiness with your configured AI provider? Resume content will be sent for analysis.')) return;
+    try {
+      setBusy('Running CV Quality Readiness');
+      setError('');
+      const result = await requestReadinessReport(settings, {
+        kind: 'cv-quality',
+        resumeTitle: target.title,
+        resumeText: resumeTextForReadiness(target)
+      });
+      await saveReadinessReport({
+        id: createId('score'),
+        schemaVersion: 1,
+        resumeId: target.id,
+        targetType: editorTargetType,
+        targetId: target.id,
+        resumeVersion: target.version,
+        kind: 'cv-quality',
+        methodologyVersion: 'cv-quality-ai-v1',
+        readinessPercent: result.readinessPercent,
+        reasons: result.reasons,
+        createdAt: new Date().toISOString()
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'CV Quality Readiness failed.');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const runJdMatchReadiness = async (fittedCvOverride?: FittedCvRecord, jobDescriptionOverride?: JobDescriptionRecord) => {
+    const fittedCv = fittedCvOverride ?? activeFittedCv;
+    const target = fittedCv ? fittedCvToResume(fittedCv) : undefined;
+    const jd = jobDescriptionOverride ?? (fittedCv?.jobDescriptionId ? jobDescriptions.find((item) => item.id === fittedCv.jobDescriptionId) : undefined);
+    if (!fittedCv || !target || !jd) return;
+    const settings = await storage.getProviderSettings();
+    if (!settings?.endpointUrl.trim() || !settings.model.trim()) {
+      setError('AI settings are required before running JD Match.');
+      return;
+    }
+    try {
+      setBusy('Running JD Match');
+      setError('');
+      const result = await requestJdMatchReport(settings, {
+        resumeTitle: target.title,
+        resumeText: resumeTextForReadiness(target),
+        jobDescriptionText: jd.description
+      });
+      const report: ScoringReportRecord = {
+        id: createId('score'),
+        schemaVersion: 1,
+        resumeId: target.id,
+        targetType: 'fitted-cv',
+        targetId: target.id,
+        resumeVersion: target.version,
+        kind: 'jd-match',
+        jobDescriptionId: jd.id,
+        methodologyVersion: 'jd-match-ai-v1',
+        readinessPercent: result.readinessPercent,
+        reasons: result.reasons,
+        createdAt: new Date().toISOString()
+      };
+      await saveReadinessReport(report);
+      const updated = { ...fittedCv, latestJdMatchReportId: report.id, updatedAt: new Date().toISOString() };
+      await storage.saveFittedCv(updated);
+      setFittedCvs((current) => [updated, ...current.filter((item) => item.id !== updated.id)]);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'JD Match failed.');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const createFittedCvFromJd = async (input: { title: string; jobDescriptionText: string }) => {
+    const base = active;
+    if (!base) return;
+    const settings = await storage.getProviderSettings();
+    if (!settings?.endpointUrl.trim() || !settings.model.trim()) {
+      setError('AI settings are required before fitting a CV to a JD.');
+      return;
+    }
+    try {
+      setBusy('Creating fitted CV');
+      setError('');
+      const timestamp = new Date().toISOString();
+      const jd: JobDescriptionRecord = {
+        id: createId('jd'),
+        schemaVersion: 1,
+        title: input.title,
+        description: input.jobDescriptionText,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      };
+      const result = await requestFitToJdDraft(settings, {
+        resumeTitle: base.title,
+        resumeText: resumeTextForReadiness(base),
+        jobDescriptionText: input.jobDescriptionText
+      });
+      const fittedCv = createFittedCvDraft({
+        baseResume: base,
+        jobDescriptionId: jd.id,
+        title: input.title,
+        changes: result.proposedChanges,
+        createdAt: timestamp
+      });
+      await storage.saveJobDescription(jd);
+      await storage.saveFittedCv(fittedCv);
+      setJobDescriptions((current) => [jd, ...current.filter((item) => item.id !== jd.id)]);
+      setFittedCvs((current) => [fittedCv, ...current.filter((item) => item.id !== fittedCv.id)]);
+      setActiveId(base.id);
+      setActiveFittedId(fittedCv.id);
+      setMode('editor');
+      await runJdMatchReadiness(fittedCv, jd);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Fit-to-JD failed.');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const reviewFittedChange = (changeId: string, decision: 'accept' | 'reject' | 'manual') => {
+    if (!activeFittedCv) return;
+    const next = decision === 'manual'
+      ? markFittedCvChangeReviewed(activeFittedCv, changeId)
+      : applyFittedCvChange(activeFittedCv, changeId, decision);
+    void saveFitted(next);
+  };
 
   const compile = async (resumeOverride?: ResumeRecord) => {
     clearTimeout(debounceRef.current);
@@ -171,7 +417,11 @@ export const App = () => {
       setBusy('Compiling in browser');
       setError('');
       const { compileResumeToPdf } = await import('../services/pdf');
-      const result = await compileResumeToPdf(target);
+      const result = {
+        ...await compileResumeToPdf(target),
+        targetType: editorTargetType,
+        targetId: target.id,
+      };
       if (gen !== compileGenRef.current) return;
       await storage.saveArtifact(result);
       setArtifact(result);
@@ -187,6 +437,7 @@ export const App = () => {
   };
 
   const saveThumbnail = async (resumeId: string, pdfBlob: Blob) => {
+    if (activeFittedCv) return;
     const { generateThumbnailDataUrl } = await import('../services/pdf');
     const thumbnailDataUrl = await generateThumbnailDataUrl(pdfBlob);
     if (!thumbnailDataUrl) return;
@@ -199,24 +450,48 @@ export const App = () => {
   };
 
   useEffect(() => {
-    if (!autoCompile || !active || mode !== 'editor') return;
+    if (!autoCompile || !editorResume || mode !== 'editor') return;
     const el = document.activeElement;
     if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return;
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => void compile(), 500);
     return () => clearTimeout(debounceRef.current);
-  }, [active?.version, autoCompile]);
+  }, [editorResume?.version, autoCompile]);
 
-  const createBlank = () => { void save(starterResume()); setMode('editor'); };
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const createBlank = (templateId: TemplateId) => { void save(starterResume(templateId)); setMode('editor'); setShowCreateModal(false); };
   const cloneActive = () => { if (!active) return; void save(duplicateResume(active)); setMode('editor'); };
-  const openResume = (resume: ResumeRecord) => { setActiveId(resume.id); setMode('editor'); void compile(resume); };
+  const openResume = (resume: ResumeRecord) => { setActiveId(resume.id); setActiveFittedId(undefined); setMode('editor'); void compile(resume); };
+  const openFittedCv = (fittedCv: FittedCvRecord) => {
+    setActiveId(fittedCv.sourceResumeId);
+    setActiveFittedId(fittedCv.id);
+    setMode('editor');
+    void compile(fittedCvToResume(fittedCv));
+  };
+
+  const confirmAsync = (message: string, danger = false): Promise<boolean> =>
+    new Promise((resolve) => {
+      setConfirmDialog({
+        message,
+        danger,
+        onConfirm: () => { setConfirmDialog(null); resolve(true); },
+        onCancel: () => { setConfirmDialog(null); resolve(false); },
+      });
+    });
 
   const deleteResume = async (id: string) => {
     const target = resumes.find((r) => r.id === id);
-    if (!target || !window.confirm(`Delete "${target.title}"? This only removes browser-local data.`)) return;
-    await storage.deleteResume(id);
+    const linkedCount = fittedCvs.filter((cv) => cv.sourceResumeId === id).length;
+    const cascadeNote = linkedCount > 0 ? ` This will also delete ${linkedCount} linked fitted CV${linkedCount !== 1 ? 's' : ''}.` : '';
+    if (!target) return;
+    if (!await confirmAsync(`Delete "${target.title}"?${cascadeNote} This only removes browser-local data.`, true)) return;
+    if (linkedCount > 0) await storage.deleteResumeCascade(id);
+    else await storage.deleteResume(id);
     const remaining = resumes.filter((r) => r.id !== id);
     setResumes(remaining);
+    setFittedCvs((items) => items.filter((cv) => cv.sourceResumeId !== id));
+    setJobDescriptions(await storage.listJobDescriptions());
+    setReadinessReports(await storage.listScoringReports());
     if (activeId === id) { setActiveId(remaining[0]?.id); if (mode === 'editor') setMode('dashboard'); }
   };
 
@@ -267,30 +542,135 @@ export const App = () => {
 
   if (mode === 'dashboard' || !active) {
     return (
-      <Dashboard
-        resumes={resumes} fittedCvs={fittedCvs} active={active} reviewCount={reviewCount} warningCount={warningCount}
-        busy={busy} error={error} onCreate={createBlank} onDuplicate={cloneActive} onOpen={openResume}
-        onDelete={deleteResume} onImportPdf={importPdf} onImportArchive={importArchive} onExportArchive={exportArchive}
-      />
+      <>
+        <Dashboard
+          resumes={resumes} fittedCvs={fittedCvs} active={active} reviewCount={dashboardReviewCount} readinessReports={readinessReports}
+          busy={busy} error={error} onCreate={() => setShowCreateModal(true)} onDuplicate={cloneActive} onOpen={openResume}
+          onOpenFitted={openFittedCv} onDelete={deleteResume} onImportPdf={importPdf} onImportArchive={importArchive} onExportArchive={exportArchive}
+        />
+        {showCreateModal && <CreateResumeModal onCreate={createBlank} onClose={() => setShowCreateModal(false)} />}
+        {confirmDialog && <ConfirmDialog {...confirmDialog} />}
+      </>
     );
   }
 
   return (
-    <EditorWorkspace
-      active={active} activeTemplate={activeTemplate} artifact={artifact} autoCompile={autoCompile}
+    <>
+      <EditorWorkspace
+      active={editorResume} activeFittedCv={activeFittedCv} sourceResume={sourceResume} activeTemplate={activeTemplate} artifact={artifact} autoCompile={autoCompile}
       busy={busy} cleanCompile={cleanCompile} error={error} pdfUrl={pdfUrl} reviewCount={reviewCount}
+      atsReadiness={atsReadiness} cvQualityReadiness={cvQualityReadiness} jdMatchReadiness={jdMatchReadiness} hasJobDescription={hasJobDescription}
+      unreviewedFitChangeCount={unreviewedFitChangeCount} exportBlocked={exportBlocked}
       onBack={() => setMode('dashboard')} onChange={updateActive} onCompile={() => void compile()}
-      onDelete={deleteActive} onDownloadPdf={() => artifact?.pdfBlob && downloadBlob(artifact.pdfBlob, `${active.title}.pdf`)}
+      onDelete={deleteActive} onDownloadPdf={() => artifact?.pdfBlob && !exportBlocked && downloadBlob(artifact.pdfBlob, `${editorResume.title}.pdf`)}
+      onRunAts={() => void runAtsReadiness()} onRunCvQuality={() => void runCvQualityReadiness()} onRunJdMatch={() => void runJdMatchReadiness()}
+      onCreateFittedCv={createFittedCvFromJd} onReviewFittedChange={reviewFittedChange}
       onToggleAutoCompile={() => setAutoCompile((v) => !v)}
     />
+      {confirmDialog && <ConfirmDialog {...confirmDialog} />}
+    </>
+  );
+};
+
+// --- Confirm dialog ---
+
+const ConfirmDialog = ({ message, onConfirm, onCancel, danger }: { message: string; onConfirm: () => void; onCancel: () => void; danger?: boolean }) => (
+  <div className="confirm-overlay" onClick={onCancel}>
+    <div className="confirm-dialog" role="alertdialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+      <p className="confirm-message">{message}</p>
+      <div className="confirm-actions">
+        <button className="ghost-button" onClick={onCancel}>Cancel</button>
+        <button className={danger ? 'button danger-solid' : 'button primary'} onClick={onConfirm}>
+          {danger ? 'Delete' : 'Confirm'}
+        </button>
+      </div>
+    </div>
+  </div>
+);
+
+// --- Create resume modal ---
+
+const TemplateSkeleton = ({ templateId }: { templateId: TemplateId }) => {
+  if (templateId === 'awesome-cv') {
+    return (
+      <div className="template-skeleton awesome-cv-skeleton">
+        <div className="tsk-header">
+          <div className="tsk-header-name" />
+          <div className="tsk-header-title" />
+          <div className="tsk-header-contact">
+            <div className="tsk-dot" /><div className="tsk-dot" /><div className="tsk-dot" />
+          </div>
+        </div>
+        <div className="tsk-body">
+          <div className="tsk-sidebar">
+            <div className="tsk-section-label" />
+            <div className="tsk-line short" /><div className="tsk-line med" /><div className="tsk-line short" />
+            <div className="tsk-section-label" style={{ marginTop: 14 }} />
+            <div className="tsk-line med" /><div className="tsk-line short" /><div className="tsk-line long" />
+          </div>
+          <div className="tsk-main">
+            <div className="tsk-section-label" />
+            <div className="tsk-line long" /><div className="tsk-line long" /><div className="tsk-line med" />
+            <div className="tsk-section-label" style={{ marginTop: 14 }} />
+            <div className="tsk-entry-head" />
+            <div className="tsk-line med" /><div className="tsk-line long" /><div className="tsk-line short" />
+            <div className="tsk-entry-head" style={{ marginTop: 8 }} />
+            <div className="tsk-line long" /><div className="tsk-line med" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return <div className="template-skeleton" />;
+};
+
+const CreateResumeModal = ({ onCreate, onClose }: { onCreate: (templateId: TemplateId) => void; onClose: () => void }) => {
+  const [selected, setSelected] = useState<TemplateId>(visibleLayoutTemplates[0].id);
+  const selectedTemplate = visibleLayoutTemplates.find((t) => t.id === selected)!;
+  return (
+    <div className="create-resume-overlay" onClick={onClose}>
+      <div className="create-resume-modal" role="dialog" aria-modal="true" aria-label="Choose a template" onClick={(e) => e.stopPropagation()}>
+        <div className="create-resume-modal-head">
+          <h2>Choose a template</h2>
+          <button className="ghost-button" onClick={onClose} aria-label="Close"><X /></button>
+        </div>
+        <div className="create-resume-modal-body">
+          <div className="create-resume-template-list">
+            {visibleLayoutTemplates.map((t) => (
+              <button
+                key={t.id}
+                className={`template-list-item${t.id === selected ? ' selected' : ''}`}
+                onClick={() => setSelected(t.id)}
+              >
+                <span className="template-list-name">{t.name}</span>
+                <span className="template-list-engine">{t.browserCompatibility.engine}</span>
+              </button>
+            ))}
+          </div>
+          <div className="create-resume-preview-panel">
+            <div className="create-resume-preview-frame">
+              <TemplateSkeleton templateId={selected} />
+            </div>
+            <div className="create-resume-preview-meta">
+              <span className="template-choice-name">{selectedTemplate.name}</span>
+              <span className="template-choice-desc">{selectedTemplate.description}</span>
+            </div>
+            <button className="primary-button" onClick={() => onCreate(selected)}>
+              Create with this template
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 
 // --- Dashboard ---
 
-const Dashboard = ({ resumes, fittedCvs, active, reviewCount, warningCount, busy, error, onCreate, onDuplicate, onOpen, onDelete, onImportPdf, onImportArchive, onExportArchive }: {
-  resumes: ResumeRecord[]; fittedCvs: FittedCvRecord[]; active?: ResumeRecord; reviewCount: number; warningCount: number;
+const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, busy, error, onCreate, onDuplicate, onOpen, onOpenFitted, onDelete, onImportPdf, onImportArchive, onExportArchive }: {
+  resumes: ResumeRecord[]; fittedCvs: FittedCvRecord[]; active?: ResumeRecord; reviewCount: number; readinessReports: ScoringReportRecord[];
   busy: string; error: string; onCreate: () => void; onDuplicate: () => void; onOpen: (resume: ResumeRecord) => void;
+  onOpenFitted: (fittedCv: FittedCvRecord) => void;
   onDelete: (id: string) => void; onImportPdf: (file: File) => void; onImportArchive: (file: File) => void; onExportArchive: () => void;
 }) => (
   <main className="dashboard-shell">
@@ -305,11 +685,6 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, warningCount, busy
         <div>
           <h1 id="dashboard-heading">My Resumes</h1>
           <p>Base resumes stay canonical. Open one to edit content, tune layout, compile a local PDF, or duplicate it for a job-specific fit.</p>
-        </div>
-        <div className="status-row" aria-label="System status">
-          <StatusPill icon={<CheckCircle2 />} label="Local first" value="Browser storage" tone="good" />
-          <StatusPill icon={<ShieldCheck />} label="ATS" value={warningCount ? `${warningCount} warnings` : 'Clear'} tone={warningCount ? 'warn' : 'good'} />
-          <StatusPill icon={<Eye />} label="Review" value={reviewCount ? `${reviewCount} fields` : 'Clear'} tone={reviewCount ? 'warn' : 'good'} />
         </div>
       </div>
       {busy && <div className="notice">{busy}</div>}
@@ -327,7 +702,6 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, warningCount, busy
               <FilterItem active label="All resumes" value={resumes.length.toString()} />
               <FilterItem label="Base resumes" value={resumes.length.toString()} />
               <FilterItem label="Needs review" value={reviewCount.toString()} />
-              <FilterItem label="ATS warnings" value={warningCount.toString()} />
             </ul>
           </section>
           <section className="filter-card" aria-label="Library actions">
@@ -346,7 +720,10 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, warningCount, busy
             </div>
           ) : resumes.map((resume) => (
             <ResumeGroup key={resume.id} resume={resume} fittedCvs={fittedCvs.filter((cv) => cv.sourceResumeId === resume.id)}
-              active={resume.id === active?.id} onOpen={() => onOpen(resume)} onDelete={() => onDelete(resume.id)} />
+              active={resume.id === active?.id}
+              cvQualityReadiness={readinessReports.find((report) => report.resumeId === resume.id && report.kind === 'cv-quality')}
+              readinessReports={readinessReports}
+              onOpen={() => onOpen(resume)} onOpenFitted={onOpenFitted} onDelete={() => onDelete(resume.id)} />
           ))}
         </section>
       </div>
@@ -356,21 +733,48 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, warningCount, busy
 
 // --- Editor workspace ---
 
-const EditorWorkspace = ({ active, activeTemplate, artifact, autoCompile, busy, cleanCompile, error, pdfUrl, reviewCount, onBack, onChange, onCompile, onDelete, onDownloadPdf, onToggleAutoCompile }: {
-  active: ResumeRecord; activeTemplate?: (typeof templates)[number]; artifact?: CompileArtifact; autoCompile: boolean;
-  busy: string; cleanCompile: boolean; error: string; pdfUrl: string; reviewCount: number;
+const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate, artifact, autoCompile, busy, cleanCompile, error, pdfUrl, reviewCount, atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription, unreviewedFitChangeCount, exportBlocked, onBack, onChange, onCompile, onDelete, onDownloadPdf, onRunAts, onRunCvQuality, onRunJdMatch, onCreateFittedCv, onReviewFittedChange, onToggleAutoCompile }: {
+  active: ResumeRecord; activeFittedCv?: FittedCvRecord; sourceResume?: ResumeRecord; activeTemplate?: (typeof templates)[number]; artifact?: CompileArtifact; autoCompile: boolean;
+  busy: string; cleanCompile: boolean; error: string; pdfUrl: string; reviewCount: number; atsReadiness?: ScoringReportRecord; cvQualityReadiness?: ScoringReportRecord; jdMatchReadiness?: ScoringReportRecord; hasJobDescription: boolean;
+  unreviewedFitChangeCount: number; exportBlocked: boolean;
   onBack: () => void; onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void; onCompile: () => void; onDelete: () => void;
-  onDownloadPdf: () => void; onToggleAutoCompile: () => void;
+  onDownloadPdf: () => void; onRunAts: () => void; onRunCvQuality: () => void; onRunJdMatch: () => void;
+  onCreateFittedCv: (input: { title: string; jobDescriptionText: string }) => Promise<void>;
+  onReviewFittedChange: (changeId: string, decision: 'accept' | 'reject' | 'manual') => void;
+  onToggleAutoCompile: () => void;
 }) => {
   const [selectedModuleId, setSelectedModuleId] = useState<string>();
+  const [showFitModal, setShowFitModal] = useState(false);
+  const [drawerDimension, setDrawerDimension] = useState<ReadinessDimension | null>(null);
   const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
   const selectedModule = activeLayout.find((m) => m.id === selectedModuleId) ?? activeLayout[0];
+  const pendingScrollField = useRef<string>();
 
   useEffect(() => {
-    if (!visibleLayoutTemplates.some((template) => template.id === active.activeTemplateId)) {
-      onChange((resume) => switchTemplate(resume, 'awesome-cv'));
+    const field = pendingScrollField.current;
+    if (!field) return;
+    pendingScrollField.current = undefined;
+    setTimeout(() => {
+      const el = document.querySelector(`[data-field="${field}"]`) as HTMLElement | null;
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        (el.querySelector('input, textarea') as HTMLElement | null)?.focus();
+      }
+    }, 50);
+  }, [selectedModuleId]);
+
+  const navigateToField = (field: string) => {
+    if (field.startsWith('content.profile') || field.startsWith('content.summary')) {
+      const module = activeLayout.find((m) => m.kind === 'section' && m.section === 'summary') ?? activeLayout[0];
+      if (module) { pendingScrollField.current = field; setSelectedModuleId(module.id); }
+    } else {
+      const match = field.match(/^content\.flexSections\.([^.]+)/);
+      if (match) {
+        const module = activeLayout.find((m) => m.kind === 'flex-section' && m.flexSectionId === match[1]);
+        if (module) { pendingScrollField.current = field; setSelectedModuleId(module.id); }
+      }
     }
-  }, [active.activeTemplateId]);
+  };
 
   return (
     <main className="editor-shell">
@@ -390,20 +794,36 @@ const EditorWorkspace = ({ active, activeTemplate, artifact, autoCompile, busy, 
             {visibleLayoutTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
         </label>
+        {activeFittedCv && (
+          <div className="fitted-context">
+            <span className="fitted-badge">Fitted CV</span>
+            <span>Based on: {sourceResume?.title ?? activeFittedCv.sourceResumeId} · Source v{activeFittedCv.sourceVersion}</span>
+          </div>
+        )}
         <div className="chrome-end-actions">
+          <ReadinessPills
+            atsReadiness={atsReadiness}
+            cvQualityReadiness={cvQualityReadiness}
+            jdMatchReadiness={jdMatchReadiness}
+            hasJobDescription={hasJobDescription}
+            onOpen={setDrawerDimension}
+          />
           <span className={cleanCompile ? 'backup-state clean' : 'backup-state'}>
-            {cleanCompile ? <CheckCircle2 /> : <Clock3 />}{cleanCompile ? 'PDF ready' : 'Not backed up'}
+            {cleanCompile ? <CheckCircle2 /> : <Clock3 />}{cleanCompile ? 'PDF ready' : 'Compile needed'}
           </span>
           <div className="chrome-action-group">
             <AiSettingsButton />
+            {!activeFittedCv && <button className="chrome-button" onClick={() => setShowFitModal(true)}><FileCheck2 />Fit to JD</button>}
             <button className={`chrome-button${autoCompile ? ' selected' : ''}`} onClick={onToggleAutoCompile} title={autoCompile ? 'Auto-compile on' : 'Auto-compile off'}><Zap />Auto</button>
             <button className="chrome-button" onClick={onCompile} disabled={!!busy}><RotateCw />Compile</button>
-            <button className="chrome-button primary" disabled={!artifact?.pdfBlob || artifact.status !== 'clean'} onClick={onDownloadPdf}><Download />Export</button>
+            <button className="chrome-button primary" disabled={!artifact?.pdfBlob || artifact.status !== 'clean' || exportBlocked} onClick={onDownloadPdf}><Download />Export</button>
           </div>
           <button className="ghost-button danger" onClick={onDelete}><Trash2 /></button>
         </div>
       </header>
       {error && <div className="notice editor-notice">{error}</div>}
+      {exportBlocked && <div className="notice editor-notice">{unreviewedFitChangeCount} unreviewed change{unreviewedFitChangeCount !== 1 ? 's' : ''} must be reviewed before export.</div>}
+      {activeFittedCv && <FittedChangeReviewPanel fittedCv={activeFittedCv} onReview={onReviewFittedChange} />}
       <section className="editor-board" aria-label="Editor workbench"
         onBlur={(e) => {
           if (!autoCompile) return;
@@ -416,7 +836,384 @@ const EditorWorkspace = ({ active, activeTemplate, artifact, autoCompile, busy, 
         <EditorPanel active={active} onChange={onChange} reviewCount={reviewCount} selectedModule={selectedModule} />
         <PreviewPanel activeTemplateName={activeTemplate?.name ?? active.activeTemplateId} artifact={artifact} busy={busy} cleanCompile={cleanCompile} pdfUrl={pdfUrl} />
       </section>
+      {showFitModal && (
+        <FitToJdModal
+          defaultTitle={`${active.title} fitted`}
+          busy={busy}
+          onClose={() => setShowFitModal(false)}
+          onCreate={async (input) => {
+            await onCreateFittedCv(input);
+            setShowFitModal(false);
+          }}
+        />
+      )}
+      {drawerDimension !== null && (
+        <ReadinessDrawer
+          dimension={drawerDimension}
+          atsReadiness={atsReadiness}
+          cvQualityReadiness={cvQualityReadiness}
+          jdMatchReadiness={jdMatchReadiness}
+          hasJobDescription={hasJobDescription}
+          onDimensionChange={setDrawerDimension}
+          onClose={() => setDrawerDimension(null)}
+          onRunAts={onRunAts}
+          onRunCvQuality={onRunCvQuality}
+          onRunJdMatch={onRunJdMatch}
+          onNavigate={navigateToField}
+        />
+      )}
     </main>
+  );
+};
+
+const scoreClass = (pct: number) => pct >= 80 ? 'score-good' : pct >= 60 ? 'score-warn' : 'score-bad';
+
+const isNavigableField = (field?: string): field is string =>
+  !!field && (
+    field.startsWith('content.profile') ||
+    field.startsWith('content.summary') ||
+    /^content\.flexSections\.[^.]+/.test(field)
+  );
+
+// --- Readiness drawer (Option B: score pills in chrome + slide-in panel) ---
+
+type ReadinessDimension = 'ats' | 'cvq' | 'jd';
+
+const pillVariant = (report?: ScoringReportRecord): 'good' | 'warn' | 'bad' | 'idle' => {
+  if (!report) return 'idle';
+  return report.readinessPercent >= 80 ? 'good' : report.readinessPercent >= 60 ? 'warn' : 'bad';
+};
+
+const ReadinessPills = ({ atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription, onOpen }: {
+  atsReadiness?: ScoringReportRecord;
+  cvQualityReadiness?: ScoringReportRecord;
+  jdMatchReadiness?: ScoringReportRecord;
+  hasJobDescription: boolean;
+  onOpen: (dimension: ReadinessDimension) => void;
+}) => (
+  <div className="readiness-pills">
+    <button
+      className={`readiness-pill pill-${pillVariant(atsReadiness)}`}
+      type="button"
+      onClick={() => onOpen('ats')}
+      aria-label={`ATS Readiness${atsReadiness ? `: ${atsReadiness.readinessPercent}%` : ': not run'}`}
+    >
+      <span className="readiness-pill-dot" aria-hidden="true" />
+      ATS{atsReadiness ? ` ${atsReadiness.readinessPercent}%` : ' —'}
+    </button>
+    <button
+      className={`readiness-pill pill-${pillVariant(cvQualityReadiness)}`}
+      type="button"
+      onClick={() => onOpen('cvq')}
+      aria-label={`CV Quality${cvQualityReadiness ? `: ${cvQualityReadiness.readinessPercent}%` : ': not run'}`}
+    >
+      <span className="readiness-pill-dot" aria-hidden="true" />
+      CV{cvQualityReadiness ? ` ${cvQualityReadiness.readinessPercent}%` : ' —'}
+    </button>
+    {hasJobDescription && (
+      <button
+        className={`readiness-pill pill-${pillVariant(jdMatchReadiness)}`}
+        type="button"
+        onClick={() => onOpen('jd')}
+        aria-label={`JD Match${jdMatchReadiness ? `: ${jdMatchReadiness.readinessPercent}%` : ': not run'}`}
+      >
+        <span className="readiness-pill-dot" aria-hidden="true" />
+        JD{jdMatchReadiness ? ` ${jdMatchReadiness.readinessPercent}%` : ' —'}
+      </button>
+    )}
+  </div>
+);
+
+const ARC_LENGTH = 163.4;
+
+const ArcGauge = ({ score, variant }: { score: number | undefined; variant: ReturnType<typeof pillVariant> }) => {
+  const fillRef = useRef<SVGPathElement>(null);
+
+  useEffect(() => {
+    const el = fillRef.current;
+    if (!el || score === undefined) return;
+    const target = ARC_LENGTH * (1 - score / 100);
+    el.style.transition = 'none';
+    el.style.strokeDashoffset = String(ARC_LENGTH);
+    const id = requestAnimationFrame(() => {
+      if (!fillRef.current) return;
+      fillRef.current.style.transition = 'stroke-dashoffset 600ms cubic-bezier(0.34, 1.56, 0.64, 1)';
+      fillRef.current.style.strokeDashoffset = String(target);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [score]);
+
+  const strokeColor =
+    variant === 'good' ? 'var(--green)' :
+    variant === 'warn' ? 'var(--amber)' :
+    variant === 'bad'  ? 'var(--red)'   : 'var(--faint)';
+
+  return (
+    <div className="readiness-arc-wrap">
+      <svg width="130" height="75" viewBox="0 0 130 75" aria-hidden="true">
+        <path className="readiness-arc-bg" d="M 18 70 A 52 52 0 0 1 112 70" />
+        {score !== undefined && (
+          <path
+            ref={fillRef}
+            className="readiness-arc-fill"
+            d="M 18 70 A 52 52 0 0 1 112 70"
+            style={{ stroke: strokeColor, strokeDasharray: ARC_LENGTH, strokeDashoffset: ARC_LENGTH }}
+          />
+        )}
+      </svg>
+      <div className="readiness-arc-center">
+        {score !== undefined
+          ? <span className={`readiness-arc-score ${scoreClass(score)}`}>{score}%</span>
+          : <span className="readiness-arc-unrun">—</span>
+        }
+      </div>
+    </div>
+  );
+};
+
+const DRAWER_META: Record<ReadinessDimension, { title: string; tabLabel: string; runLabel: string }> = {
+  ats: { title: 'ATS Readiness', tabLabel: 'ATS',        runLabel: 'Run ATS Check'  },
+  cvq: { title: 'CV Quality',    tabLabel: 'CV Quality', runLabel: 'Run CV Quality' },
+  jd:  { title: 'JD Match',      tabLabel: 'JD Match',   runLabel: 'Run JD Match'   },
+};
+
+const ReadinessDrawer = ({
+  dimension, atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription,
+  onDimensionChange, onClose, onRunAts, onRunCvQuality, onRunJdMatch, onNavigate,
+}: {
+  dimension: ReadinessDimension;
+  atsReadiness?: ScoringReportRecord;
+  cvQualityReadiness?: ScoringReportRecord;
+  jdMatchReadiness?: ScoringReportRecord;
+  hasJobDescription: boolean;
+  onDimensionChange: (d: ReadinessDimension) => void;
+  onClose: () => void;
+  onRunAts: () => void;
+  onRunCvQuality: () => void;
+  onRunJdMatch: () => void;
+  onNavigate?: (field: string) => void;
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setIsOpen(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const activeReport =
+    dimension === 'ats' ? atsReadiness :
+    dimension === 'cvq' ? cvQualityReadiness : jdMatchReadiness;
+
+  const meta = DRAWER_META[dimension];
+  const tabs: ReadinessDimension[] = ['ats', 'cvq', ...(hasJobDescription ? ['jd' as const] : [])];
+
+  const runActive = () => {
+    if (dimension === 'ats') onRunAts();
+    else if (dimension === 'cvq') onRunCvQuality();
+    else onRunJdMatch();
+  };
+
+  const tabIssueCount = (d: ReadinessDimension) => {
+    const r = d === 'ats' ? atsReadiness : d === 'cvq' ? cvQualityReadiness : jdMatchReadiness;
+    return r?.reasons.filter((reason) => reason.severity !== 'info').length ?? 0;
+  };
+
+  return (
+    <>
+      <div className="readiness-drawer-overlay" aria-hidden="true" onClick={onClose} />
+      <aside
+        className={`readiness-drawer${isOpen ? ' is-open' : ''}`}
+        role="dialog"
+        aria-label={`${meta.title} details`}
+        aria-modal="true"
+      >
+        <div className="readiness-drawer-head">
+          <div className="readiness-drawer-head-text">
+            <strong>{meta.title}</strong>
+            {activeReport && <span className="readiness-drawer-timestamp">Updated {formatRelative(activeReport.createdAt)}</span>}
+          </div>
+          {activeReport && (
+            <span className={`readiness-drawer-score ${scoreClass(activeReport.readinessPercent)}`}>
+              {activeReport.readinessPercent}%
+            </span>
+          )}
+          <button className="readiness-drawer-close" type="button" onClick={onClose} aria-label="Close readiness drawer">
+            <X />
+          </button>
+        </div>
+        <div className="readiness-drawer-tabs" role="tablist">
+          {tabs.map((d) => {
+            const count = tabIssueCount(d);
+            return (
+              <button
+                key={d}
+                role="tab"
+                aria-selected={dimension === d}
+                className={`readiness-drawer-tab${dimension === d ? ' active' : ''}`}
+                type="button"
+                onClick={() => onDimensionChange(d)}
+              >
+                {DRAWER_META[d].tabLabel}
+                {count > 0 && <span className="readiness-drawer-tab-badge">{count}</span>}
+              </button>
+            );
+          })}
+        </div>
+        <div className="readiness-drawer-body">
+          <ArcGauge key={dimension} score={activeReport?.readinessPercent} variant={pillVariant(activeReport)} />
+          {activeReport ? (
+            activeReport.reasons.length > 0 ? (
+              <div className="readiness-drawer-issues">
+                <div className="readiness-drawer-section-lbl">Issues · {activeReport.reasons.length}</div>
+                {activeReport.reasons.map((reason) => {
+                  const navigable = isNavigableField(reason.field) && !!onNavigate;
+                  return (
+                    <div
+                      key={`${reason.id}-${reason.field ?? 'resume'}`}
+                      className={`readiness-drawer-issue${navigable ? ' navigable' : ''}`}
+                      {...(navigable ? {
+                        role: 'button',
+                        tabIndex: 0,
+                        onClick: () => { onNavigate!(reason.field!); onClose(); },
+                        onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { onNavigate!(reason.field!); onClose(); } },
+                      } : {})}
+                    >
+                      <span className={`readiness-drawer-issue-sev ${reason.severity}`}>
+                        {reason.severity === 'high' ? 'High' : reason.severity === 'medium' ? 'Med' : 'Info'}
+                      </span>
+                      <div className="readiness-drawer-issue-body">
+                        <div className="readiness-drawer-issue-msg">{reason.message}</div>
+                        {reason.impact !== undefined && (
+                          <div className="readiness-drawer-issue-impact">{reason.impact} pts</div>
+                        )}
+                      </div>
+                      {navigable && <ArrowRight className="readiness-drawer-issue-arrow" aria-hidden="true" />}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="readiness-drawer-empty">No issues found — looking good.</p>
+            )
+          ) : (
+            <p className="readiness-drawer-empty">
+              {dimension === 'jd'
+                ? 'Fit this resume to a job description to see alignment.'
+                : 'Run this check to see results.'}
+            </p>
+          )}
+          <button className="readiness-drawer-run" type="button" onClick={runActive}>
+            <RotateCw />{meta.runLabel}
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+};
+
+const FitToJdModal = ({ defaultTitle, busy, onCreate, onClose }: {
+  defaultTitle: string;
+  busy: string;
+  onCreate: (input: { title: string; jobDescriptionText: string }) => Promise<void>;
+  onClose: () => void;
+}) => {
+  const [title, setTitle] = useState(defaultTitle);
+  const [jobDescriptionText, setJobDescriptionText] = useState('');
+  const canSubmit = title.trim().length > 0 && jobDescriptionText.trim().length >= 20 && !busy;
+  return (
+    <div className="create-resume-overlay" onClick={onClose}>
+      <div className="fit-jd-modal" role="dialog" aria-modal="true" aria-label="Fit to job description" onClick={(event) => event.stopPropagation()}>
+        <div className="create-resume-modal-head">
+          <h2>Fit to job description</h2>
+          <button className="ghost-button" onClick={onClose} aria-label="Close"><X /></button>
+        </div>
+        <div className="fit-jd-fields">
+          <label>
+            <span>Fitted CV title</span>
+            <input value={title} onChange={(event) => setTitle(event.target.value)} aria-label="Fitted CV title" />
+          </label>
+          <label>
+            <span>Job description</span>
+            <textarea value={jobDescriptionText} onChange={(event) => setJobDescriptionText(event.target.value)} aria-label="Job description" rows={10} />
+          </label>
+          <div className="provider-disclosure">
+            <strong>Provider disclosure</strong>
+            <span>The current resume text and this job description will be sent to your configured AI provider. FitCV stores the fitted CV and JD locally.</span>
+          </div>
+        </div>
+        <div className="modal-actions">
+          <button className="chrome-button" onClick={onClose}>Cancel</button>
+          <button className="chrome-button primary" disabled={!canSubmit} onClick={() => onCreate({ title: title.trim(), jobDescriptionText: jobDescriptionText.trim() })}>
+            {busy ? <Loader2 className="spin" /> : <FileCheck2 />}Create fitted CV
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const FittedChangeReviewPanel = ({ fittedCv, onReview }: {
+  fittedCv: FittedCvRecord;
+  onReview: (changeId: string, decision: 'accept' | 'reject' | 'manual') => void;
+}) => {
+  const pendingCount = fittedCv.proposedChanges.filter((change) => change.status === 'pending').length;
+  const [expanded, setExpanded] = useState(pendingCount > 0);
+
+  if (!fittedCv.proposedChanges.length) return null;
+
+  return (
+    <section className="fit-review-panel" aria-label="AI change review">
+      <div className="fit-review-panel-head">
+        <button
+          className="fit-review-collapse-btn"
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+        >
+          {expanded ? <ChevronUp /> : <ChevronDown />}
+          <span className="fit-review-head-title">AI change review</span>
+          <span className="fit-review-head-meta">{pendingCount ? `${pendingCount} unreviewed change${pendingCount !== 1 ? 's' : ''}` : 'All reviewed'}</span>
+        </button>
+      </div>
+      <div className={`fit-review-panel-body${expanded ? ' is-open' : ''}`} aria-hidden={!expanded}>
+        <div className="fit-review-panel-body-inner">
+          <div className="fit-review-list">
+            {fittedCv.proposedChanges.map((change) => (
+              <article key={change.id} className={`fit-review-item ${change.status}`}>
+                <div className="fit-review-meta">
+                  <span className="template-chip">{change.status}</span>
+                  <strong>{change.targetField}</strong>
+                </div>
+                <div className="fit-review-diff">
+                  <div><span>Original</span><p>{change.before || 'Empty'}</p></div>
+                  <div><span>Proposed</span><p>{change.after}</p></div>
+                </div>
+                <p className="fit-review-rationale">{change.rationale}</p>
+                {change.jdEvidence && <p className="fit-review-evidence">JD: {change.jdEvidence}</p>}
+                {change.riskFlags.length > 0 && (
+                  <div className="risk-flags">
+                    {change.riskFlags.map((flag) => <span key={flag}>{flag}</span>)}
+                  </div>
+                )}
+                {change.status === 'pending' && (
+                  <div className="fit-review-actions">
+                    <button className="chrome-button primary" onClick={() => onReview(change.id, 'accept')}><CheckCircle2 />Accept change</button>
+                    <button className="chrome-button" onClick={() => onReview(change.id, 'reject')}>Reject change</button>
+                    <button className="chrome-button" onClick={() => onReview(change.id, 'manual')}><Pencil />Mark manually reviewed</button>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
   );
 };
 
@@ -439,10 +1236,19 @@ const FilterItem = ({ active = false, label, value }: { active?: boolean; label:
 
 // --- Resume group card ---
 
-const ResumeGroup = ({ resume, fittedCvs, active, onOpen, onDelete }: { resume: ResumeRecord; fittedCvs: FittedCvRecord[]; active: boolean; onOpen: () => void; onDelete: () => void }) => {
+const ResumeGroup = ({ resume, fittedCvs, active, cvQualityReadiness, readinessReports, onOpen, onOpenFitted, onDelete }: {
+  resume: ResumeRecord;
+  fittedCvs: FittedCvRecord[];
+  active: boolean;
+  cvQualityReadiness?: ScoringReportRecord;
+  readinessReports: ScoringReportRecord[];
+  onOpen: () => void;
+  onOpenFitted: (fittedCv: FittedCvRecord) => void;
+  onDelete: () => void;
+}) => {
   const template = templates.find((item) => item.id === resume.activeTemplateId);
-  const checks = runAtsChecks(resume);
-  const warnings = checks.filter((check) => check.status !== 'pass').length;
+  const atsReadiness = buildAtsReadinessReport(resume);
+  const reviewCount = resume.reviewMarkers.filter((marker) => marker.needsReview).length;
   const sectionCount = resume.content.flexSections.length;
 
   return (
@@ -458,7 +1264,13 @@ const ResumeGroup = ({ resume, fittedCvs, active, onOpen, onDelete }: { resume: 
           <div className="meta">
             <span>Updated {formatRelative(resume.updatedAt)}</span>
             <span>{sectionCount} section{sectionCount !== 1 ? 's' : ''}</span>
-            <span>{warnings ? `${warnings} ATS warnings` : 'ATS clear'}</span>
+          </div>
+          <div className="resume-readiness" aria-label={`${resume.title} readiness`}>
+            <span className={`readiness-chip ${scoreClass(atsReadiness.readinessPercent)}`}>ATS {atsReadiness.readinessPercent}%</span>
+            <span className={cvQualityReadiness ? `readiness-chip ${scoreClass(cvQualityReadiness.readinessPercent)}` : 'readiness-chip muted'}>
+              CV Quality {cvQualityReadiness ? `${cvQualityReadiness.readinessPercent}%` : 'Not run'}
+            </span>
+            {reviewCount > 0 && <span className="readiness-chip score-warn">Review {reviewCount} field{reviewCount !== 1 ? 's' : ''}</span>}
           </div>
           <p className="summary">{resume.content.summary || 'No summary yet. Open the editor to add a focused positioning statement.'}</p>
           <div className="actions">
@@ -470,21 +1282,34 @@ const ResumeGroup = ({ resume, fittedCvs, active, onOpen, onDelete }: { resume: 
       <div className="fit-strip">
         <div className="strip-head"><h3>Fitted CVs</h3><p>Job-specific versions of this resume</p></div>
         <div className="fit-grid">
-          {fittedCvs.length > 0 ? fittedCvs.map((cv) => <FittedCvCard key={cv.id} fittedCv={cv} />) : <FitCardCta />}
+          {fittedCvs.length > 0 ? fittedCvs.map((cv) => (
+            <FittedCvCard
+              key={cv.id}
+              fittedCv={cv}
+              jdMatchReadiness={readinessReports.find((report) =>
+                report.kind === 'jd-match'
+                && (report.targetType ?? 'resume') === 'fitted-cv'
+                && (report.targetId ?? report.resumeId) === cv.id
+                && (report.jobDescriptionId ?? '') === (cv.jobDescriptionId ?? '')
+              )}
+              onOpen={() => onOpenFitted(cv)}
+            />
+          )) : <FitCardCta />}
         </div>
       </div>
     </article>
   );
 };
 
-const FittedCvCard = ({ fittedCv }: { fittedCv: FittedCvRecord }) => (
-  <article className="fit-card">
+const FittedCvCard = ({ fittedCv, jdMatchReadiness, onOpen }: { fittedCv: FittedCvRecord; jdMatchReadiness?: ScoringReportRecord; onOpen: () => void }) => (
+  <article className="fit-card" role="button" tabIndex={0} onClick={onOpen} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') onOpen(); }}>
     <div className="fit-top">
       <div className="doc-mini"><span /><span /><span /><span /></div>
       <div className="fit-title"><div className="company">Fitted CV</div><div className="role">{fittedCv.title}</div></div>
     </div>
     <div className="fit-footer">
-      <span className="score high">{fittedCv.acceptedChangeIds.length} changes</span>
+      <span className={jdMatchReadiness ? `score ${scoreClass(jdMatchReadiness.readinessPercent)}` : 'score'}>JD Match {jdMatchReadiness ? `${jdMatchReadiness.readinessPercent}%` : 'Not run'}</span>
+      <span className={fittedCvHasUnreviewedChanges(fittedCv) ? 'score score-warn' : 'score high'}>{fittedCvHasUnreviewedChanges(fittedCv) ? 'Review needed' : `${fittedCv.acceptedChangeIds.length} accepted`}</span>
       <span className="date">{formatRelative(fittedCv.updatedAt)}</span>
     </div>
   </article>
@@ -1339,7 +2164,7 @@ type ProfileTextFieldProps = {
 
 const ProfileTextField = ({ field, hidden, label, onChange, parseValue, type = 'text', value }: ProfileTextFieldProps) => {
   return (
-    <div className={`profile-field-row${hidden ? ' profile-field-hidden' : ''}`}>
+    <div className={`profile-field-row${hidden ? ' profile-field-hidden' : ''}`} data-field={`content.profile.${field}`}>
       <span className="field-label">{label}</span>
       <AiInput ariaLabel={label} assistLabel={label} type={type} value={value}
         onValue={(next) => onChange((r) => updateProfileField(r, field, parseValue ? parseValue(next) : next))} />
@@ -1514,6 +2339,28 @@ const updateProfileHighlight = (resume: ResumeRecord, index: number, patchValue:
 };
 
 const splitList = (value: string) => value.split(',').map((item) => item.trim()).filter(Boolean);
+
+const resumeTextForReadiness = (resume: ResumeRecord) => [
+  resume.title,
+  resume.content.profile.fullName,
+  resume.content.profile.headline,
+  resume.content.profile.email,
+  resume.content.profile.phone,
+  resume.content.profile.location,
+  (resume.content.profile.links ?? []).join(', '),
+  resume.content.summary,
+  ...(resume.content.profileHighlights ?? []).map((item) => item.text),
+  ...resume.content.flexSections.flatMap((section) => [
+    section.name,
+    ...section.items.flatMap(readinessTextFromFlexItem)
+  ])
+].filter(Boolean).join('\n');
+
+const readinessTextFromFlexItem = (item: FlexSection['items'][number]): string[] => {
+  if (isHeading(item)) return [item.text];
+  if (isSubSection(item)) return [item.environment, ...item.items.flatMap(readinessTextFromFlexItem)];
+  return Object.values(item.fields).flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean);
+};
 
 const formatRelative = (date: string) => {
   const diff = Date.now() - new Date(date).getTime();

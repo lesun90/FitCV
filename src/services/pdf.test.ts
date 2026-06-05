@@ -35,9 +35,18 @@ describe('resume PDF compile service', () => {
         return array;
       }
     });
-    const resume = createResume('Fallback ID Resume', 'classic-ats');
+    const resume = createResume('Fallback ID Resume', 'awesome-cv');
 
-    const result = await compileResumeToPdf(resume);
+    const result = await compileResumeToPdf(resume, {
+      compileLatexProject: async () => ({
+        status: 'failed',
+        pdfBlob: undefined,
+        logs: ['compile error'],
+        diagnostics: [],
+        elapsedMs: 1,
+        cacheState: 'not-ready'
+      })
+    });
 
     expect(result.id).toMatch(/^artifact-[0-9a-f-]{36}$/);
     expect(result.status).toBe('failed');

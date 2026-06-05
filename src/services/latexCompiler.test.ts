@@ -121,6 +121,18 @@ describe('LaTeX compiler service', () => {
     expect(result.logs.join('\n')).toContain('resume.aux unavailable');
   });
 
+  it('returns a failed result immediately when the main file is not in the project', async () => {
+    const result = await compileLatexProject({
+      engine: 'xelatex',
+      mainFile: 'missing.tex',
+      files: [textFile('resume.tex', '\\documentclass{article}')]
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.diagnostics[0]).toContain('"missing.tex" was not found');
+    expect(compileMock).not.toHaveBeenCalled();
+  });
+
   it('tears down the BusyTeX runner after each compile to avoid descriptor exhaustion', async () => {
     compileMock.mockResolvedValue({
       success: true,

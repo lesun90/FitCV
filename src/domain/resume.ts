@@ -12,9 +12,9 @@ const now = () => {
 };
 const id = createId;
 
-export const defaultTemplateSettings = (templateId: TemplateId): TemplateSettings => ({
-  color: templateId === 'classic-ats' ? '#143d3a' : templateId === 'awesome-cv' ? '#d13624' : '#3949ab',
-  typography: templateId === 'classic-ats' ? 'Literata' : templateId === 'awesome-cv' ? 'Source Sans Pro' : 'Aptos',
+export const defaultTemplateSettings = (_templateId: TemplateId): TemplateSettings => ({
+  color: '#d13624',
+  typography: 'Source Sans Pro',
   spacing: 'comfortable',
   pagePadding: 42,
 });
@@ -163,8 +163,8 @@ export const sampleResume = (): ResumeRecord => {
   return resume;
 };
 
-export const starterResume = (): ResumeRecord => {
-  const resume = createResume('Untitled Resume', 'awesome-cv');
+export const starterResume = (templateId: TemplateId = 'awesome-cv'): ResumeRecord => {
+  const resume = createResume('Untitled Resume', templateId);
 
   resume.content.profile = {
     ...emptyContent().profile,

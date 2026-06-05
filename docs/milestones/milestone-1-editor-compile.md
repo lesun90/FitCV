@@ -186,22 +186,20 @@ Failure handling:
 
 ## ATS Checks
 
-Milestone 1 includes deterministic checks only:
+Milestone 1 includes deterministic ATS Readiness checks only. The current rule set and weights are documented in [ATS Readiness](../ats-readiness.md).
 
-- Standard section labels.
-- Template ATS-readability metadata.
-- Excessive formatting warnings.
-- Missing required contact fields.
-- PDF text extraction check when available.
-- Link readability.
+- Contact extraction: name, email, phone or location, visible contact fields, and readable links.
+- Standard section anchors: Experience, Skills, and at least one supporting section such as Education, Projects, Research, or Publications.
+- Section content: nonstandard headings, empty sections, placeholder text, thin bullet structure, and unclear dates.
+- Generated PDF text smoke test when extracted text is available.
 
 AI-based CV quality scoring is out of scope for this milestone.
 
 Check output:
 
-- Each warning includes severity, affected field or template, explanation, and suggested manual fix.
+- Each reason includes severity, affected field, explanation, and readiness impact.
 - Checks run against structured data before compile and against generated PDF text when extraction is available.
-- Checks do not invent qualitative scores in milestone 1; they report pass, warning, or blocked states.
+- Checks report a deterministic readiness percent plus reasons. They do not use AI and do not estimate writing quality or job fit.
 
 ## Implementation Notes
 

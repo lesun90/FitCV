@@ -64,6 +64,26 @@ vi.mock('../services/aiProvider', async (importOriginal) => {
     requestAiSuggestion: vi.fn(async () => ({
       replacement: 'Led Q4 launch for 12 vehicles.',
       rationale: 'Sharper impact.'
+    })),
+    requestFitToJdDraft: vi.fn(async () => ({
+      proposedChanges: [{
+        targetField: 'content.summary',
+        before: 'Structured technical leader who turns ambiguous systems into readable, durable programs.',
+        after: 'Frontend platform leader who turns ambiguous systems into accessible browser tools.',
+        rationale: 'Aligns the summary to the JD platform focus.',
+        jdEvidence: 'Frontend platform engineer building accessible browser tools.',
+        riskFlags: ['verify-scope']
+      }]
+    })),
+    requestJdMatchReport: vi.fn(async () => ({
+      readinessPercent: 88,
+      reasons: [{
+        id: 'keyword-coverage',
+        severity: 'info',
+        field: 'content.summary',
+        message: 'Strong platform and accessibility keyword coverage.',
+        impact: 0
+      }]
     }))
   };
 });
@@ -92,6 +112,31 @@ describe('FitCV UI shell', () => {
     expect(screen.getByRole('complementary', { name: 'Browser PDF preview' })).toBeInTheDocument();
     expect(screen.queryByRole('toolbar', { name: 'Preview actions' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Show compile logs' })).toBeInTheDocument();
+  });
+
+  it('shows separate readiness lanes without a combined score or JD match before a JD exists', async () => {
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'My Resumes' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('System status')).not.toBeInTheDocument();
+    expect(screen.getByText(/^ATS \d+%$/)).toBeInTheDocument();
+    expect(screen.getByText('CV Quality Not run')).toBeInTheDocument();
+    expect(screen.queryByText('Browser storage')).not.toBeInTheDocument();
+    expect(screen.queryByText('Review Clear')).not.toBeInTheDocument();
+    expect(screen.queryByText('Combined Score')).not.toBeInTheDocument();
+    expect(screen.queryByText('JD Match Readiness')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/i }));
+
+    // Pills appear in the chrome for ATS and CV; JD pill only appears once a JD exists
+    expect(await screen.findByRole('button', { name: /ATS Readiness/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /CV Quality/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /JD Match/ })).not.toBeInTheDocument();
+
+    // Clicking a pill opens the drawer with the run button inside
+    fireEvent.click(screen.getByRole('button', { name: /ATS Readiness/ }));
+    expect(await screen.findByRole('button', { name: 'Run ATS Check' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Run JD Match' })).not.toBeInTheDocument();
   });
 
   it('shows Awesome CV as a FitCV layout with module controls in the editor', async () => {
@@ -232,6 +277,39 @@ describe('FitCV UI shell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Accept suggestion' }));
 
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Led Q4 launch for 12 vehicles.');
+  });
+
+  it('creates a fitted CV from a JD and blocks export until AI changes are reviewed', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'AI settings' }));
+    fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://ai.example.test/v1/chat/completions' } });
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'cv-model' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'AI settings' })).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fit to JD' }));
+    expect(await screen.findByRole('dialog', { name: 'Fit to job description' })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Fitted CV title'), { target: { value: 'Ada - Frontend Platform' } });
+    fireEvent.change(screen.getByLabelText('Job description'), { target: { value: 'Frontend platform engineer building accessible browser tools.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create fitted CV' }));
+
+    expect(await screen.findByText('Fitted CV')).toBeInTheDocument();
+    expect(screen.getByText(/Based on:/)).toBeInTheDocument();
+    expect(screen.getByText('AI change review')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Export' })).toBeDisabled();
+    expect(screen.getAllByText(/1 unreviewed change/).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept change' }));
+
+    await waitFor(() => expect(screen.queryByText(/1 unreviewed change/)).not.toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Export' })).not.toBeDisabled();
+    expect(screen.getByRole('button', { name: 'JD Match: 88%' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
+    expect(await screen.findByText('Ada - Frontend Platform')).toBeInTheDocument();
+    expect(screen.getByText('JD Match 88%')).toBeInTheDocument();
   });
 
   it('shows the flex section editor when a flex section module is selected', async () => {

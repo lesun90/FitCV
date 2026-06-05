@@ -351,7 +351,7 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
     const saved = sanitizeSettings(settings, apiKey || settings.apiKey || '');
     if (!saved.rememberApiKey) setSessionApiKey(apiKey || getSessionApiKey());
     cachedSettings = saved;
-    void storage.saveProviderSettings(saved);
+    await storage.saveProviderSettings(saved);
     onSaved?.(saved);
     onClose();
   };

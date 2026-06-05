@@ -82,7 +82,7 @@ The dashboard groups fitted CVs under their source base resume. Each fitted CV c
 
 - Company or role label.
 - JD Match Score.
-- ATS Parse Score if available.
+- ATS Readiness if available.
 - Compile status.
 - Last updated date.
 - Actions: open, duplicate, export PDF, delete.

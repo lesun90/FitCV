@@ -176,10 +176,6 @@ describe('template adapters', () => {
     expect(result.latexSource).not.toContain('Hidden highlight.');
   });
 
-  it('does not expose an adapter for fallback templates', () => {
-    expect(getTemplateAdapter('classic-ats')).toBeUndefined();
-  });
-
   it('awesome-cv contract declares pinnedSections, sectionEnvs, and entryTypes', () => {
     const template = getTemplate('awesome-cv');
     expect(template.pinnedSections).toContain('summary');

@@ -88,7 +88,7 @@ The report includes a numeric score, explanation, prioritized suggestions, field
 
 ## ATS Suggestions
 
-Milestone 2 builds on deterministic ATS checks from milestone 1 with AI-assisted suggestions. ATS Parse Score remains separate from CV Quality Score.
+Milestone 2 builds on deterministic ATS Readiness from milestone 1 with AI-assisted suggestions. ATS Readiness remains separate from CV Quality Readiness.
 
 AI can suggest clearer section labels, keyword phrasing, simpler bullet wording, and missing standard fields. It must flag when an improvement would require facts the user has not provided.
 

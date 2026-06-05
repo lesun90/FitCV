@@ -4,7 +4,7 @@ import { createResume } from './resume';
 
 describe('.fitcv archive', () => {
   it('round trips local data collections without API keys', async () => {
-    const resume = createResume('Local Only Resume', 'classic-ats');
+    const resume = createResume('Local Only Resume', 'awesome-cv');
     const file = await exportFitcvArchive({
       resumes: [resume],
       artifacts: [],
@@ -63,5 +63,41 @@ describe('.fitcv archive', () => {
     expect(payload).toContain('https://ai.example.test');
     expect(payload).not.toContain('remembered-secret');
     expect(payload).not.toContain('apiKey');
+  });
+
+  it('round trips readiness reports as latest local scoring metadata', async () => {
+    const resume = createResume('Readiness Resume', 'awesome-cv');
+    const file = await exportFitcvArchive({
+      resumes: [resume],
+      artifacts: [],
+      fittedCvs: [],
+      jobDescriptions: [],
+      scoringReports: [{
+        id: 'score-ats',
+        schemaVersion: 1,
+        resumeId: resume.id,
+        resumeVersion: resume.version,
+        kind: 'ats',
+        methodologyVersion: 'ats-deterministic-v1',
+        readinessPercent: 94,
+        reasons: [{
+          id: 'baseline-pass',
+          severity: 'info',
+          message: 'No deterministic ATS blockers found.',
+          impact: 0
+        }],
+        createdAt: '2026-06-01T00:00:00.000Z'
+      }]
+    });
+
+    const imported = await importFitcvArchive(file);
+
+    expect(imported.scoringReports).toEqual([
+      expect.objectContaining({
+        kind: 'ats',
+        readinessPercent: 94,
+        reasons: [expect.objectContaining({ id: 'baseline-pass' })]
+      })
+    ]);
   });
 });

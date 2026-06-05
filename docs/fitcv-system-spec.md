@@ -106,23 +106,23 @@ AI features:
 
 Before any AI request, FitCV must disclose what content will be sent and which provider will receive it. AI output is represented as proposed edits with rationale, risk flags, and accept/reject state.
 
-## Scoring
+## Readiness Reports
 
-FitCV provides three separate scores. It must not collapse them into one universal truth score.
+FitCV provides three separate readiness reports. It must not collapse them into one universal truth score.
 
-### ATS Parse Score
+### ATS Readiness
 
-Estimates how easy the exported CV is for Applicant Tracking Systems to parse. It checks standard section labels, simple formatting, readable ordering, keyword visibility, link clarity, template metadata, and generated PDF text extraction where possible.
+Estimates how easy the exported CV is for Applicant Tracking Systems to parse. It checks contact extraction, standard section anchors, section content, placeholder text, bullet structure, date readability, link clarity, hidden contact fields, and generated PDF text extraction where possible. The current methodology is documented in [ATS Readiness](./ats-readiness.md).
 
-### CV Quality Score
+### CV Quality Readiness
 
 Evaluates the resume without a job description. It looks at clarity, impact, measurable results, action verbs, concision, completeness, consistency, and weak or vague bullets.
 
-### JD Match Score
+### JD Match Readiness
 
 Evaluates a fitted CV against a job description. It checks keyword coverage, role alignment, required skills, seniority signals, missing evidence, and overclaim risk.
 
-Each score stores methodology version, resume version, explanation, prioritized suggestions, and field-level proposed edits when available.
+Each readiness report stores methodology version, resume version, readiness percent, and field-level reasons. AI-assisted reports may include proposed edits when available.
 
 ## Architecture
 
@@ -210,7 +210,7 @@ Desktop editor layout:
 - **Left style/layout panel**: section order, section visibility, template controls, theme color, typography, spacing, page padding, and template-specific options.
 - **Center edit panel**: active section editor with card-like groups, repeatable items, collapsible entries, drag handles, visibility toggles, delete controls, custom fields, and AI polish buttons.
 - **Right preview panel**: browser-compiled PDF preview, page boundaries, compile state, logs, ATS/readability warnings, and section-to-editor navigation where possible.
-- **Floating action dock**: template switch, AI polish, CV score, ATS score, fit-to-JD, duplicate, export PDF, backup/export archive, and panel collapse controls.
+- **Floating action dock**: template switch, AI polish, CV Quality Readiness, ATS Readiness, fit-to-JD, duplicate, export PDF, backup/export archive, and panel collapse controls.
 
 Mobile editor layout:
 
