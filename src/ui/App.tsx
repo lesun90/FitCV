@@ -28,7 +28,7 @@ import {
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
 import { buildAtsReadinessReport } from '../domain/checks';
 import { applyFittedCvChange, createFittedCvDraft, fittedCvHasUnreviewedChanges, markFittedCvChangeReviewed } from '../domain/fittedCv';
-import { clearReviewMarkersForField, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, starterResume, switchTemplate, touchResume } from '../domain/resume';
+import { clearReviewMarkersForField, createResume, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, starterResume, switchTemplate, touchResume } from '../domain/resume';
 import { templates, getTemplate } from '../domain/templates';
 import type {
   CompileArtifact,
@@ -459,6 +459,7 @@ export const App = () => {
   }, [editorResume?.version, autoCompile]);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const createBlank = (templateId: TemplateId) => { void save(starterResume(templateId)); setMode('editor'); setShowCreateModal(false); };
   const cloneActive = () => { if (!active) return; void save(duplicateResume(active)); setMode('editor'); };
   const openResume = (resume: ResumeRecord) => { setActiveId(resume.id); setActiveFittedId(undefined); setMode('editor'); void compile(resume); };
@@ -524,15 +525,66 @@ export const App = () => {
     downloadBlob(file, file.name);
   };
 
-  const importPdf = async (file: File) => {
+  const openImportCvModal = async () => {
+    const settings = await storage.getProviderSettings();
+    if (!settings?.endpointUrl.trim() || !settings.model.trim()) {
+      setError('AI settings are required before importing a CV. Configure them via the AI settings button.');
+      return;
+    }
+    setShowImportModal(true);
+  };
+
+  const importCvAsNew = async (file: File, templateId: TemplateId) => {
+    setShowImportModal(false);
     try {
-      setBusy('Extracting PDF text');
-      const { createResumeFromPdf } = await import('../services/importer');
-      const resume = await createResumeFromPdf(file);
-      await save(resume);
+      setBusy('Extracting and analysing CV');
+      setError('');
+      const settings = await storage.getProviderSettings();
+      if (!settings?.endpointUrl.trim() || !settings.model.trim()) {
+        setError('AI settings are required to import a CV.');
+        return;
+      }
+      const { aiImportResumeContent } = await import('../services/importer');
+      const template = getTemplate(templateId);
+      const { content, reviewMarkers, importNotes } = await aiImportResumeContent(file, settings, template);
+      const title = file.name.replace(/\.[^.]+$/, '').trim() || 'Imported CV';
+      const base = createResume(title, templateId);
+      const otherLayouts = Object.fromEntries(
+        Object.entries(base.templateLayouts).filter(([k]) => k !== templateId)
+      ) as typeof base.templateLayouts;
+      const populated = ensureTemplateLayouts(touchResume({ ...base, content, reviewMarkers, importNotes, templateLayouts: otherLayouts }));
+      await save(populated);
       setMode('editor');
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'PDF import failed.');
+      setError(caught instanceof Error ? caught.message : 'CV import failed.');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const importCvWithAi = async (file: File) => {
+    const settings = await storage.getProviderSettings();
+    if (!settings?.endpointUrl.trim() || !settings.model.trim()) {
+      setError('AI settings are required before importing a CV. Configure them via the AI settings button.');
+      return;
+    }
+    if (!active) return;
+    const confirmed = await confirmAsync('This will replace all content in the current CV. This cannot be undone.', true);
+    if (!confirmed) return;
+    try {
+      setBusy('Extracting and analysing CV');
+      setError('');
+      const { aiImportResumeContent } = await import('../services/importer');
+      const template = getTemplate(active.activeTemplateId);
+      const { content, reviewMarkers, importNotes } = await aiImportResumeContent(file, settings, template);
+      updateActive((resume) => {
+        const otherLayouts = Object.fromEntries(
+          Object.entries(resume.templateLayouts).filter(([k]) => k !== resume.activeTemplateId)
+        ) as typeof resume.templateLayouts;
+        return ensureTemplateLayouts(touchResume({ ...resume, content, reviewMarkers, importNotes, templateLayouts: otherLayouts }));
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'CV import failed.');
     } finally {
       setBusy('');
     }
@@ -546,9 +598,11 @@ export const App = () => {
         <Dashboard
           resumes={resumes} fittedCvs={fittedCvs} active={active} reviewCount={dashboardReviewCount} readinessReports={readinessReports}
           busy={busy} error={error} onCreate={() => setShowCreateModal(true)} onDuplicate={cloneActive} onOpen={openResume}
-          onOpenFitted={openFittedCv} onDelete={deleteResume} onImportPdf={importPdf} onImportArchive={importArchive} onExportArchive={exportArchive}
+          onOpenFitted={openFittedCv} onDelete={deleteResume} onImportArchive={importArchive} onExportArchive={exportArchive}
+          onImportCvWithAi={() => void openImportCvModal()}
         />
         {showCreateModal && <CreateResumeModal onCreate={createBlank} onClose={() => setShowCreateModal(false)} />}
+        {showImportModal && <ImportResumeModal onImport={importCvAsNew} onClose={() => setShowImportModal(false)} />}
         {confirmDialog && <ConfirmDialog {...confirmDialog} />}
       </>
     );
@@ -566,6 +620,7 @@ export const App = () => {
       onRunAts={() => void runAtsReadiness()} onRunCvQuality={() => void runCvQualityReadiness()} onRunJdMatch={() => void runJdMatchReadiness()}
       onCreateFittedCv={createFittedCvFromJd} onReviewFittedChange={reviewFittedChange}
       onToggleAutoCompile={() => setAutoCompile((v) => !v)}
+      onImportCvWithAi={importCvWithAi}
     />
       {confirmDialog && <ConfirmDialog {...confirmDialog} />}
     </>
@@ -665,18 +720,64 @@ const CreateResumeModal = ({ onCreate, onClose }: { onCreate: (templateId: Templ
   );
 };
 
+const ImportResumeModal = ({ onImport, onClose }: { onImport: (file: File, templateId: TemplateId) => void; onClose: () => void }) => {
+  const [selected, setSelected] = useState<TemplateId>(visibleLayoutTemplates[0].id);
+  const [file, setFile] = useState<File | null>(null);
+  const selectedTemplate = visibleLayoutTemplates.find((t) => t.id === selected)!;
+  return (
+    <div className="create-resume-overlay" onClick={onClose}>
+      <div className="create-resume-modal" role="dialog" aria-modal="true" aria-label="Import CV with AI" onClick={(e) => e.stopPropagation()}>
+        <div className="create-resume-modal-head">
+          <h2>Import CV with AI</h2>
+          <button className="ghost-button" onClick={onClose} aria-label="Close"><X /></button>
+        </div>
+        <div className="create-resume-modal-body">
+          <div className="create-resume-template-list">
+            {visibleLayoutTemplates.map((t) => (
+              <button
+                key={t.id}
+                className={`template-list-item${t.id === selected ? ' selected' : ''}`}
+                onClick={() => setSelected(t.id)}
+              >
+                <span className="template-list-name">{t.name}</span>
+                <span className="template-list-engine">{t.browserCompatibility.engine}</span>
+              </button>
+            ))}
+          </div>
+          <div className="create-resume-preview-panel">
+            <div className="create-resume-preview-frame">
+              <TemplateSkeleton templateId={selected} />
+            </div>
+            <div className="create-resume-preview-meta">
+              <span className="template-choice-name">{selectedTemplate.name}</span>
+              <span className="template-choice-desc">{selectedTemplate.description}</span>
+            </div>
+            <label className="chrome-button" style={{ justifyContent: 'center', cursor: 'pointer' }}>
+              <Upload />{file ? file.name : 'Choose file (PDF, TXT, MD)'}
+              <input type="file" accept=".pdf,.txt,.md" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            </label>
+            <button className="primary-button" disabled={!file} onClick={() => file && onImport(file, selected)}>
+              Import with this template
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // --- Dashboard ---
 
-const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, busy, error, onCreate, onDuplicate, onOpen, onOpenFitted, onDelete, onImportPdf, onImportArchive, onExportArchive }: {
+const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, busy, error, onCreate, onDuplicate, onOpen, onOpenFitted, onDelete, onImportArchive, onExportArchive, onImportCvWithAi }: {
   resumes: ResumeRecord[]; fittedCvs: FittedCvRecord[]; active?: ResumeRecord; reviewCount: number; readinessReports: ScoringReportRecord[];
   busy: string; error: string; onCreate: () => void; onDuplicate: () => void; onOpen: (resume: ResumeRecord) => void;
   onOpenFitted: (fittedCv: FittedCvRecord) => void;
-  onDelete: (id: string) => void; onImportPdf: (file: File) => void; onImportArchive: (file: File) => void; onExportArchive: () => void;
+  onDelete: (id: string) => void; onImportArchive: (file: File) => void; onExportArchive: () => void;
+  onImportCvWithAi: () => void;
 }) => (
   <main className="dashboard-shell">
     <TopChrome label="Resume library">
-      <label className="chrome-button"><Upload />PDF<input type="file" accept="application/pdf" onChange={(e) => e.target.files?.[0] && onImportPdf(e.target.files[0])} /></label>
-      <label className="chrome-button"><FileArchive />Import<input type="file" accept=".fitcv,application/json" onChange={(e) => e.target.files?.[0] && onImportArchive(e.target.files[0])} /></label>
+      <button className="chrome-button" onClick={onImportCvWithAi}><Zap />Import CV (AI)</button>
       <AiSettingsButton />
       <button className="chrome-button primary" onClick={onCreate}><FilePlus2 />New Resume</button>
     </TopChrome>
@@ -708,6 +809,7 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, 
             <h2>Actions</h2>
             <button className="filter-action" onClick={onDuplicate}><Copy />Duplicate active</button>
             <button className="filter-action" onClick={onExportArchive}><Download />Export backup</button>
+            <label className="filter-action"><FileArchive />Restore backup<input type="file" accept=".fitcv,application/json" hidden onChange={(e) => e.target.files?.[0] && onImportArchive(e.target.files[0])} /></label>
           </section>
         </aside>
         <section className="resume-library" aria-label="Resume groups">
@@ -733,7 +835,7 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, 
 
 // --- Editor workspace ---
 
-const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate, artifact, autoCompile, busy, cleanCompile, error, pdfUrl, reviewCount, atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription, unreviewedFitChangeCount, exportBlocked, onBack, onChange, onCompile, onDelete, onDownloadPdf, onRunAts, onRunCvQuality, onRunJdMatch, onCreateFittedCv, onReviewFittedChange, onToggleAutoCompile }: {
+const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate, artifact, autoCompile, busy, cleanCompile, error, pdfUrl, reviewCount, atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription, unreviewedFitChangeCount, exportBlocked, onBack, onChange, onCompile, onDelete, onDownloadPdf, onRunAts, onRunCvQuality, onRunJdMatch, onCreateFittedCv, onReviewFittedChange, onToggleAutoCompile, onImportCvWithAi }: {
   active: ResumeRecord; activeFittedCv?: FittedCvRecord; sourceResume?: ResumeRecord; activeTemplate?: (typeof templates)[number]; artifact?: CompileArtifact; autoCompile: boolean;
   busy: string; cleanCompile: boolean; error: string; pdfUrl: string; reviewCount: number; atsReadiness?: ScoringReportRecord; cvQualityReadiness?: ScoringReportRecord; jdMatchReadiness?: ScoringReportRecord; hasJobDescription: boolean;
   unreviewedFitChangeCount: number; exportBlocked: boolean;
@@ -742,6 +844,7 @@ const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate,
   onCreateFittedCv: (input: { title: string; jobDescriptionText: string }) => Promise<void>;
   onReviewFittedChange: (changeId: string, decision: 'accept' | 'reject' | 'manual') => void;
   onToggleAutoCompile: () => void;
+  onImportCvWithAi: (file: File) => void;
 }) => {
   const [selectedModuleId, setSelectedModuleId] = useState<string>();
   const [showFitModal, setShowFitModal] = useState(false);
@@ -814,6 +917,12 @@ const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate,
           <div className="chrome-action-group">
             <AiSettingsButton />
             {!activeFittedCv && <button className="chrome-button" onClick={() => setShowFitModal(true)}><FileCheck2 />Fit to JD</button>}
+            {!activeFittedCv && (
+              <label className="chrome-button" title="Import CV data from a PDF, TXT, or Markdown file using AI" style={{ cursor: 'pointer' }}>
+                <Upload />Import CV (AI)
+                <input type="file" accept=".pdf,.txt,.md" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) { e.target.value = ''; onImportCvWithAi(f); } }} />
+              </label>
+            )}
             <button className={`chrome-button${autoCompile ? ' selected' : ''}`} onClick={onToggleAutoCompile} title={autoCompile ? 'Auto-compile on' : 'Auto-compile off'}><Zap />Auto</button>
             <button className="chrome-button" onClick={onCompile} disabled={!!busy}><RotateCw />Compile</button>
             <button className="chrome-button primary" disabled={!artifact?.pdfBlob || artifact.status !== 'clean' || exportBlocked} onClick={onDownloadPdf}><Download />Export</button>

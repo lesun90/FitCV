@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, Bot, CheckCircle2, Loader2, Sparkles, X } from 'lucide-react';
 import { storage } from '../services/storage';
+import type { GeminiQuotaSnapshot } from '../domain/types';
 import {
   getSessionApiKey,
   isAiConfigured,
@@ -70,11 +71,24 @@ const loadSettings = async () => cachedSettings ?? (await storage.getProviderSet
 
 export const AiSettingsButton = () => {
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [open]);
+
   return (
-    <>
+    <div ref={containerRef} style={{ position: 'relative' }}>
       <button className="chrome-button" type="button" onClick={() => setOpen(true)} aria-label="AI settings"><Bot />AI</button>
       {open && <AiSettingsDialog onClose={() => setOpen(false)} />}
-    </>
+    </div>
   );
 };
 
@@ -322,6 +336,29 @@ export const AiAssistButton = ({
 
 const PROVIDER_ORDER: AiProvider[] = ['openai', 'deepseek', 'gemini', 'claude', 'local'];
 
+const QuotaBar = ({ quota }: { quota: GeminiQuotaSnapshot }) => {
+  const pct = Math.max(0, Math.min(100, Math.round((quota.remaining / quota.limit) * 100)));
+  const isLow = pct < 20;
+  return (
+    <div className="gemini-quota">
+      <div className="gemini-quota-track">
+        <div
+          className={`gemini-quota-fill${isLow ? ' low' : ''}`}
+          style={{ width: `${pct}%` }}
+          role="progressbar"
+          aria-valuenow={quota.remaining}
+          aria-valuemin={0}
+          aria-valuemax={quota.limit}
+          aria-label={`Gemini quota: ${quota.remaining} of ${quota.limit} requests remaining`}
+        />
+      </div>
+      <span className="gemini-quota-label">
+        {quota.remaining.toLocaleString()} / {quota.limit.toLocaleString()} requests remaining today
+      </span>
+    </div>
+  );
+};
+
 const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
   compact?: boolean;
   onClose: () => void;
@@ -329,12 +366,14 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
 }) => {
   const [settings, setSettings] = useState<AiProviderSettings>(blankSettings);
   const [apiKey, setApiKey] = useState('');
+  const [geminiQuota, setGeminiQuota] = useState<GeminiQuotaSnapshot | null>(null);
 
   useEffect(() => {
     void loadSettings().then((loadedSettings) => {
       setSettings(loadedSettings);
       setApiKey('');
     });
+    setGeminiQuota(storage.getGeminiQuota());
   }, []);
 
   const selectProvider = (p: AiProvider) => {
@@ -368,6 +407,8 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
   };
 
   const activePreset = settings.provider ? PROVIDER_PRESETS[settings.provider] : undefined;
+  const activeModels = activePreset?.models ?? [];
+  const modelIsPreset = activeModels.includes(settings.model);
 
   return (
     <div className={compact ? 'ai-settings compact' : 'ai-settings'} role="dialog" aria-label="AI settings">
@@ -388,6 +429,9 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
             </button>
           ))}
         </div>
+        {settings.provider === 'gemini' && geminiQuota && (
+          <QuotaBar quota={geminiQuota} />
+        )}
       </div>
       {activePreset?.corsNote && (
         <p className="ai-cors-note">{activePreset.corsNote}</p>
@@ -399,8 +443,35 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
       </label>
       <label>
         <span>Model</span>
-        <input aria-label="Model" value={settings.model} placeholder={activePreset?.defaultModel ?? 'your-model-name'}
-          onChange={(e) => setSettings({ ...settings, model: e.target.value })} />
+        {activeModels.length > 0 ? (
+          <>
+            <select
+              aria-label="Model"
+              value={modelIsPreset ? settings.model : '__custom__'}
+              onChange={(e) => {
+                if (e.target.value === '__custom__') {
+                  setSettings({ ...settings, model: '' });
+                } else {
+                  setSettings({ ...settings, model: e.target.value });
+                }
+              }}
+            >
+              {activeModels.map((m) => <option key={m} value={m}>{m}</option>)}
+              <option value="__custom__">Custom model name…</option>
+            </select>
+            {!modelIsPreset && (
+              <input
+                aria-label="Custom model name"
+                value={settings.model}
+                placeholder="e.g. gemini-2.5-flash-preview-05-20"
+                onChange={(e) => setSettings({ ...settings, model: e.target.value })}
+              />
+            )}
+          </>
+        ) : (
+          <input aria-label="Model" value={settings.model} placeholder={activePreset?.defaultModel ?? 'your-model-name'}
+            onChange={(e) => setSettings({ ...settings, model: e.target.value })} />
+        )}
       </label>
       <label>
         <span>API key{activePreset?.apiKeyUrl && (

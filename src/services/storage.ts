@@ -3,6 +3,7 @@ import type {
   AppPreference,
   CompileArtifact,
   FittedCvRecord,
+  GeminiQuotaSnapshot,
   JobDescriptionRecord,
   ProviderSettingsRecord,
   ResumeRecord,
@@ -278,5 +279,22 @@ export const storage = {
     } finally {
       database.close();
     }
-  }
+  },
+
+  getGeminiQuota(): GeminiQuotaSnapshot | null {
+    try {
+      const raw = localStorage.getItem('fitcv-gemini-quota');
+      return raw ? (JSON.parse(raw) as GeminiQuotaSnapshot) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveGeminiQuota(snapshot: GeminiQuotaSnapshot): void {
+    try {
+      localStorage.setItem('fitcv-gemini-quota', JSON.stringify(snapshot));
+    } catch {
+      // ignore quota write errors
+    }
+  },
 };

@@ -1,4 +1,7 @@
-import type { AiProvider, FittedCvRiskFlag, ProviderSettingsRecord, ScoringReportRecord } from '../domain/types';
+import { createId } from '../domain/ids';
+import { emptyContent } from '../domain/resume';
+import type { AiProvider, EntryTypeDefinition, FittedCvRiskFlag, FlexEntry, FlexSection, FlexSubSection, ProviderSettingsRecord, ResumeContent, ScoringReportRecord, SectionEnvDefinition } from '../domain/types';
+import { storage } from './storage';
 
 export type { AiProvider };
 export type AiAssistAction = 'rephrase' | 'shorten' | 'rewrite';
@@ -10,6 +13,7 @@ type ProviderPreset = {
   label: string;
   endpointUrl: string;
   defaultModel: string;
+  models: string[];
   apiKeyUrl?: string;
   corsNote?: string;
 };
@@ -19,18 +23,21 @@ export const PROVIDER_PRESETS: Record<AiProvider, ProviderPreset> = {
     label: 'OpenAI',
     endpointUrl: 'https://api.openai.com/v1/chat/completions',
     defaultModel: 'gpt-4o',
+    models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo'],
     apiKeyUrl: 'https://platform.openai.com/api-keys',
   },
   deepseek: {
     label: 'DeepSeek',
     endpointUrl: 'https://api.deepseek.com/v1/chat/completions',
     defaultModel: 'deepseek-chat',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
     apiKeyUrl: 'https://platform.deepseek.com/api_keys',
   },
   gemini: {
     label: 'Gemini',
     endpointUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     defaultModel: 'gemini-2.0-flash',
+    models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'],
     apiKeyUrl: 'https://aistudio.google.com/apikey',
     corsNote: 'Gemini may block direct browser requests. Use a local OpenAI-compatible proxy if you see CORS errors.',
   },
@@ -38,6 +45,7 @@ export const PROVIDER_PRESETS: Record<AiProvider, ProviderPreset> = {
     label: 'Claude',
     endpointUrl: '',
     defaultModel: 'claude-opus-4-8',
+    models: ['claude-opus-4-8', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
     apiKeyUrl: 'https://console.anthropic.com/settings/keys',
     corsNote: "Anthropic's API blocks browser requests and uses a different message format. Point the endpoint to a local OpenAI-compatible proxy (e.g. LiteLLM) configured to forward to Claude.",
   },
@@ -45,6 +53,7 @@ export const PROVIDER_PRESETS: Record<AiProvider, ProviderPreset> = {
     label: 'Local LLM',
     endpointUrl: 'http://localhost:11434/v1/chat/completions',
     defaultModel: 'llama3.2',
+    models: ['llama3.2', 'llama3.1', 'mistral', 'phi3', 'qwen2.5'],
   },
 };
 
@@ -340,26 +349,7 @@ export const requestAiSuggestion = async (
   settings: AiProviderSettings,
   request: AiAssistRequest
 ): Promise<AiAssistSuggestion> => {
-  if (!isAiConfigured(settings)) throw new Error('AI settings are incomplete.');
-  const apiKey = getApiKeyForRequest(settings);
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-
-  const response = await fetch(settings.endpointUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: settings.model,
-      messages: buildAiAssistMessages(request),
-      temperature: 0.2
-    })
-  });
-  if (!response.ok) {
-    throw new Error(await buildProviderError(response));
-  }
-  const data = await response.json() as { choices?: { message?: { content?: string } }[] };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error('AI provider returned no suggestion.');
+  const content = await requestChatContent(settings, buildAiAssistMessages(request), 0.2);
   const suggestion = parseSuggestion(content);
   if (!suggestion.replacement) throw new Error('AI provider returned an empty suggestion.');
   return suggestion;
@@ -369,26 +359,7 @@ export const requestReadinessReport = async (
   settings: AiProviderSettings,
   request: ReadinessReportRequest
 ): Promise<AiReadinessResult> => {
-  if (!isAiConfigured(settings)) throw new Error('AI settings are incomplete.');
-  const apiKey = getApiKeyForRequest(settings);
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-
-  const response = await fetch(settings.endpointUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: settings.model,
-      messages: buildReadinessMessages(request),
-      temperature: 0.1
-    })
-  });
-  if (!response.ok) {
-    throw new Error(await buildProviderError(response));
-  }
-  const data = await response.json() as { choices?: { message?: { content?: string } }[] };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error('AI provider returned no readiness report.');
+  const content = await requestChatContent(settings, buildReadinessMessages(request), 0.1);
   const report = parseReadinessResult(content);
   if (report.reasons.length === 0) throw new Error('AI provider returned no readiness reasons.');
   return report;
@@ -411,6 +382,13 @@ const requestChatContent = async (settings: AiProviderSettings, messages: ChatMe
   });
   if (!response.ok) {
     throw new Error(await buildProviderError(response));
+  }
+  if (settings.provider === 'gemini') {
+    const remaining = parseInt(response.headers.get('x-ratelimit-remaining-requests') ?? '', 10);
+    const limit = parseInt(response.headers.get('x-ratelimit-limit-requests') ?? '', 10);
+    if (!isNaN(remaining) && !isNaN(limit) && limit > 0) {
+      storage.saveGeminiQuota({ remaining, limit, updatedAt: new Date().toISOString() });
+    }
   }
   const data = await response.json() as { choices?: { message?: { content?: string } }[] };
   const content = data.choices?.[0]?.message?.content;
@@ -436,4 +414,175 @@ export const requestJdMatchReport = async (
   const report = parseReadinessResult(content);
   if (report.reasons.length === 0) throw new Error('AI provider returned no JD Match reasons.');
   return report;
+};
+
+// --- CV import from file ---
+
+export type ImportFromCvRequest = {
+  text: string;
+  sectionEnvs: SectionEnvDefinition[];
+  entryTypes: EntryTypeDefinition[];
+};
+
+export const buildImportFromCvMessages = (request: ImportFromCvRequest): ChatMessage[] => {
+  const envDescriptions = request.sectionEnvs.map((env) => {
+    const allowedEntries = env.allowedEntryTypeIds.map((typeId) => {
+      const et = request.entryTypes.find((e) => e.id === typeId);
+      if (!et) return `type "${typeId}"`;
+      const fields = et.fields.map((f) =>
+        f.multiline
+          ? `"${f.id}" (${f.label}, multiline — use \\n to separate lines, NOT an array)`
+          : `"${f.id}" (${f.label})`
+      ).join(', ');
+      return `type "${typeId}" (${et.label}) with fields: ${fields}`;
+    }).join('; ');
+    return `  env "${env.id}" (${env.label}): ${allowedEntries}`;
+  }).join('\n');
+
+  const exampleLines: string[] = [];
+  outer: for (const env of request.sectionEnvs) {
+    for (const typeId of env.allowedEntryTypeIds) {
+      const et = request.entryTypes.find((e) => e.id === typeId);
+      if (!et || et.fields.length < 2 || !et.fields.some((f) => f.multiline)) continue;
+      const exampleFields: Record<string, string> = {};
+      for (const f of et.fields) {
+        exampleFields[f.id] = f.multiline ? 'First bullet point\nSecond bullet point' : `Example ${f.label}`;
+      }
+      exampleLines.push(
+        `Example entry for env "${env.id}", type "${typeId}" (note: multiline field uses \\n, not an array):`,
+        JSON.stringify({ type: typeId, fields: exampleFields }, null, 2),
+      );
+      break outer;
+    }
+  }
+
+  return [
+    {
+      role: 'system',
+      content: [
+        'You are a CV data extractor.',
+        'Extract structured information from the provided CV text and return it as strict JSON.',
+        '',
+        'EXTRACTION RULES:',
+        '1. Copy all values verbatim. Do NOT rephrase, improve, summarise, or modify any text.',
+        '2. Names, dates, titles, metrics, and descriptions must appear exactly as in the source.',
+        '3. Do not invent information not present in the source.',
+        '4. MULTILINE FIELDS (e.g. "highlights", "description"): return as a single \\n-separated string — NOT an array.',
+        '5. SECTION MAPPING: map each CV section heading to the closest environment by label. Typical mappings:',
+        '     "Work Experience" / "Experience" → environment labelled "Experience"',
+        '     "Education" → environment labelled "CV Entries"',
+        '     "Projects" → environment labelled "Projects"',
+        '     "Skills" / "Technical Skills" → environment labelled "Skills"',
+        '     Any other section → use the "cvitems" environment if available, otherwise closest match',
+        '6. Use only the environment IDs and entry type IDs listed in the vocabulary below.',
+        '7. Omit sections and fields absent from the source.',
+        '8. Do not wrap the response in markdown fences.',
+        '',
+        'Return strict JSON with this exact shape:',
+        '{ "profile": { "fullName": "", "headline": "", "email": "", "phone": "", "location": "", "linkedin": "", "links": [], "extraInfo": "" },',
+        '"summary": "",',
+        '"flexSections": [ { "name": "SECTION NAME", "items": [ { "environment": "<env-id>", "items": [ { "type": "<entry-type-id>", "fields": { "<field-id>": "<value>" } } ] } ] } ] }',
+        ...(exampleLines.length ? ['', ...exampleLines] : []),
+        '',
+        'Template vocabulary (use only these IDs):',
+        envDescriptions,
+        '',
+        'Omit sections and fields absent from the source. Do not wrap the response in markdown fences.',
+      ].join('\n'),
+    },
+    {
+      role: 'user',
+      content: `CV text:\n${request.text}`,
+    },
+  ];
+};
+
+const parseImportedContent = (
+  raw: unknown,
+  sectionEnvs: SectionEnvDefinition[],
+  entryTypes: EntryTypeDefinition[]
+): ResumeContent => {
+  const parsed = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const base = emptyContent();
+  base.profileHighlights = undefined;
+
+  if (parsed.profile && typeof parsed.profile === 'object') {
+    const p = parsed.profile as Record<string, unknown>;
+    base.profile = {
+      ...base.profile,
+      fullName: typeof p.fullName === 'string' ? p.fullName.trim() : '',
+      headline: typeof p.headline === 'string' ? p.headline.trim() : '',
+      email: typeof p.email === 'string' ? p.email.trim() : '',
+      phone: typeof p.phone === 'string' ? p.phone.trim() : '',
+      location: typeof p.location === 'string' ? p.location.trim() : '',
+      linkedin: typeof p.linkedin === 'string' ? p.linkedin.trim() : '',
+      links: Array.isArray(p.links) ? p.links.map(String).filter(Boolean) : [],
+      extraInfo: typeof p.extraInfo === 'string' ? p.extraInfo.trim() : '',
+    };
+  }
+
+  if (typeof parsed.summary === 'string') {
+    base.summary = parsed.summary.trim();
+  }
+
+  const validEnvIds = new Set(sectionEnvs.map((e) => e.id));
+  const validTypeIds = new Set(entryTypes.map((e) => e.id));
+
+  if (Array.isArray(parsed.flexSections)) {
+    base.flexSections = (parsed.flexSections as unknown[])
+      .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object' && typeof (s as Record<string, unknown>).name === 'string'))
+      .map((section): FlexSection => {
+        const subs: FlexSubSection[] = Array.isArray(section.items)
+          ? (section.items as unknown[])
+            .filter((sub): sub is Record<string, unknown> => {
+              if (!sub || typeof sub !== 'object') return false;
+              return validEnvIds.has(String((sub as Record<string, unknown>).environment ?? ''));
+            })
+            .map((sub): FlexSubSection => {
+              const entries: FlexEntry[] = Array.isArray(sub.items)
+                ? (sub.items as unknown[])
+                  .filter((e): e is Record<string, unknown> => {
+                    if (!e || typeof e !== 'object') return false;
+                    return validTypeIds.has(String((e as Record<string, unknown>).type ?? ''));
+                  })
+                  .map((e): FlexEntry => {
+                    const rawFields = (e.fields && typeof e.fields === 'object' && !Array.isArray(e.fields))
+                      ? e.fields as Record<string, unknown>
+                      : {};
+                    const fields: Record<string, string> = {};
+                    for (const [k, v] of Object.entries(rawFields)) {
+                      if (typeof v === 'string') {
+                        fields[k] = v;
+                      } else if (Array.isArray(v)) {
+                        // Coerce arrays (AI often returns multiline fields as arrays despite instructions)
+                        fields[k] = v.filter((item) => typeof item === 'string').join('\n');
+                      }
+                    }
+                    return { id: createId('entry'), type: String(e.type), fields };
+                  })
+                  .filter((e) => Object.values(e.fields).some((v) => typeof v === 'string' && v.trim()))
+                : [];
+              return { id: createId('sub'), environment: String(sub.environment), items: entries };
+            })
+          : [];
+        return {
+          id: createId('section'),
+          name: String(section.name).trim(),
+          items: subs,
+        };
+      })
+      .filter((s) => s.name);
+  }
+
+  return base;
+};
+
+export const requestImportFromCv = async (
+  settings: AiProviderSettings,
+  request: ImportFromCvRequest
+): Promise<ResumeContent> => {
+  const raw = await requestChatContent(settings, buildImportFromCvMessages(request), 0);
+  const normalized = stripMarkdownFence(raw);
+  const parsed = JSON.parse(extractJsonObject(normalized)) as unknown;
+  return parseImportedContent(parsed, request.sectionEnvs, request.entryTypes);
 };

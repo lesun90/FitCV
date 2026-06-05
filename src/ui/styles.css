@@ -4229,7 +4229,8 @@ pre {
   gap: 5px;
 }
 
-.ai-settings input {
+.ai-settings input,
+.ai-settings select {
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -4238,7 +4239,12 @@ pre {
   width: 100%;
 }
 
-.ai-settings input:focus {
+.ai-settings select {
+  padding-right: 32px;
+}
+
+.ai-settings input:focus,
+.ai-settings select:focus {
   border-color: var(--blue);
   outline: none;
 }
@@ -4506,6 +4512,35 @@ pre {
 
 .ai-settings .ai-apikey-link:hover {
   text-decoration: underline;
+}
+
+.gemini-quota {
+  display: grid;
+  gap: 4px;
+  padding-top: 6px;
+}
+
+.gemini-quota-track {
+  background: var(--surface-soft);
+  border-radius: 2px;
+  height: 4px;
+  overflow: hidden;
+}
+
+.gemini-quota-fill {
+  background: var(--green);
+  border-radius: 2px;
+  height: 100%;
+  transition: width 300ms ease;
+}
+
+.gemini-quota-fill.low {
+  background: var(--amber);
+}
+
+.gemini-quota-label {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 /* ─── Readiness cards ─── */

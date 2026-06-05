@@ -298,6 +298,12 @@ export interface ProviderSettingsRecord {
   updatedAt: string;
 }
 
+export interface GeminiQuotaSnapshot {
+  remaining: number;
+  limit: number;
+  updatedAt: string;
+}
+
 export interface AppPreference {
   schemaVersion: 1;
   id: 'default';

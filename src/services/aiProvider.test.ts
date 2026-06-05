@@ -2,16 +2,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildAiAssistMessages,
   buildFitToJdMessages,
+  buildImportFromCvMessages,
   buildJdMatchMessages,
   clearSessionApiKey,
   isAiConfigured,
   requestFitToJdDraft,
+  requestImportFromCv,
   requestJdMatchReport,
   requestReadinessReport,
   requestAiSuggestion,
   setSessionApiKey,
   type AiProviderSettings
 } from './aiProvider';
+import type { FlexSubSection } from '../domain/types';
 
 const testSettings: AiProviderSettings = {
   id: 'default',
@@ -143,7 +146,7 @@ describe('AI provider service', () => {
       action: 'rephrase',
       fieldLabel: 'Summary',
       text: 'Built reliable systems.'
-    })).rejects.toThrow('AI provider returned no suggestion.');
+    })).rejects.toThrow('AI provider returned no content.');
   });
 
   it('requests CV quality readiness as a percent with reasons', async () => {
@@ -237,6 +240,168 @@ describe('AI provider service', () => {
     expect(serialized).toContain('Return strict JSON with keys: readinessPercent, reasons');
     expect(serialized).toContain('Do not return proposed edits');
     expect(serialized).toContain('JD Match Readiness');
+  });
+
+  it('builds extraction-only import prompt with dynamic template vocabulary', () => {
+    const messages = buildImportFromCvMessages({
+      text: 'Ada Lovelace\nSkills: Python, TypeScript',
+      sectionEnvs: [
+        { id: 'cvskills', label: 'Skills', allowedEntryTypeIds: ['cvskill'] },
+        { id: 'experience', label: 'Experience', allowedEntryTypeIds: ['cventry'], allowsSubsectionHeading: true },
+      ],
+      entryTypes: [
+        { id: 'cvskill', label: 'Skill Group', fields: [{ id: 'type', label: 'Category' }, { id: 'skills', label: 'Skills' }] },
+        { id: 'cventry', label: 'CV Entry', fields: [{ id: 'position', label: 'Position' }, { id: 'date', label: 'Date' }] },
+      ],
+    });
+    const serialized = JSON.stringify(messages);
+
+    expect(serialized).toContain('Do NOT rephrase');
+    expect(serialized).toContain('verbatim');
+    expect(serialized).toContain('Do not invent');
+    expect(serialized).toContain('cvskills');
+    expect(serialized).toContain('cvskill');
+    expect(serialized).toContain('\\"type\\"');
+    expect(serialized).toContain('\\"skills\\"');
+    expect(serialized).toContain('experience');
+    expect(serialized).toContain('cventry');
+    expect(serialized).toContain('Ada Lovelace');
+    expect(serialized).toContain('MULTILINE FIELDS');
+    expect(serialized).toContain('SECTION MAPPING');
+    expect(serialized).toContain('EXTRACTION RULES');
+  });
+
+  it('includes a concrete multiline example in the import prompt when the template has a multiline field', () => {
+    const messages = buildImportFromCvMessages({
+      text: 'Ada Lovelace',
+      sectionEnvs: [
+        { id: 'experience', label: 'Experience', allowedEntryTypeIds: ['cventry'] },
+      ],
+      entryTypes: [
+        { id: 'cventry', label: 'CV Entry', fields: [
+          { id: 'position', label: 'Position' },
+          { id: 'title', label: 'Title' },
+          { id: 'highlights', label: 'Highlights', multiline: true },
+        ]},
+      ],
+    });
+    const serialized = JSON.stringify(messages);
+
+    // The example should use \n as separator (shown as \\n in the prompt text, serialised as \\\\n)
+    expect(serialized).toContain('First bullet point');
+    expect(serialized).toContain('Second bullet point');
+    // Field descriptions should annotate multiline fields
+    expect(serialized).toContain('NOT an array');
+  });
+
+  it('regenerates all IDs in imported content, discarding AI-provided IDs', async () => {
+    const aiProvidedIds = {
+      sectionId: 'ai-section-id-must-not-survive',
+      subId: 'ai-sub-id-must-not-survive',
+      entryId: 'ai-entry-id-must-not-survive',
+    };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        profile: { fullName: 'Ada Lovelace', email: 'ada@example.com', headline: 'Engineer', phone: '', location: '', links: [], extraInfo: '' },
+        summary: 'Computing pioneer.',
+        flexSections: [{
+          id: aiProvidedIds.sectionId,
+          name: 'SKILLS',
+          items: [{ id: aiProvidedIds.subId, environment: 'cvskills', items: [{ id: aiProvidedIds.entryId, type: 'cvskill', fields: { type: 'Languages', skills: 'Python, TypeScript' } }] }],
+        }],
+      }) } }]
+    }), { status: 200 })));
+
+    const result = await requestImportFromCv(testSettings, {
+      text: 'Ada Lovelace\nSkills: Python, TypeScript',
+      sectionEnvs: [{ id: 'cvskills', label: 'Skills', allowedEntryTypeIds: ['cvskill'] }],
+      entryTypes: [{ id: 'cvskill', label: 'Skill Group', fields: [{ id: 'type', label: 'Category' }, { id: 'skills', label: 'Skills' }] }],
+    });
+
+    expect(result.profile.fullName).toBe('Ada Lovelace');
+    expect(result.profile.email).toBe('ada@example.com');
+    expect(result.summary).toBe('Computing pioneer.');
+    expect(result.flexSections).toHaveLength(1);
+    expect(result.flexSections[0].id).not.toBe(aiProvidedIds.sectionId);
+    const sub = result.flexSections[0].items[0] as FlexSubSection;
+    expect(sub.id).not.toBe(aiProvidedIds.subId);
+    expect(sub.items[0].id).not.toBe(aiProvidedIds.entryId);
+    expect((sub.items[0] as { fields: Record<string, string> }).fields.skills).toBe('Python, TypeScript');
+  });
+
+  it('filters out subsections with invalid environment values and entries with invalid type values', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        profile: { fullName: 'Ada', email: '', headline: '', phone: '', location: '', links: [], extraInfo: '' },
+        summary: '',
+        flexSections: [
+          { name: 'VALID', items: [{ environment: 'cvskills', items: [{ type: 'cvskill', fields: { type: 'Languages', skills: 'Python' } }] }] },
+          { name: 'BAD ENV', items: [{ environment: 'hallucinated-env', items: [{ type: 'cvskill', fields: {} }] }] },
+          { name: 'BAD TYPE', items: [{ environment: 'cvskills', items: [{ type: 'hallucinated-type', fields: {} }] }] },
+        ],
+      }) } }]
+    }), { status: 200 })));
+
+    const result = await requestImportFromCv(testSettings, {
+      text: 'Ada skills: Python',
+      sectionEnvs: [{ id: 'cvskills', label: 'Skills', allowedEntryTypeIds: ['cvskill'] }],
+      entryTypes: [{ id: 'cvskill', label: 'Skill Group', fields: [{ id: 'type', label: 'Category' }, { id: 'skills', label: 'Skills' }] }],
+    });
+
+    const validSection = result.flexSections.find((s) => s.name === 'VALID');
+    const badEnvSection = result.flexSections.find((s) => s.name === 'BAD ENV');
+    const badTypeSection = result.flexSections.find((s) => s.name === 'BAD TYPE');
+
+    expect(validSection).toBeDefined();
+    expect((validSection!.items[0] as FlexSubSection).items).toHaveLength(1);
+    expect(badEnvSection).toBeDefined();
+    expect(badEnvSection!.items).toHaveLength(0);
+    expect(badTypeSection).toBeDefined();
+    expect((badTypeSection!.items[0] as FlexSubSection).items).toHaveLength(0);
+  });
+
+  it('coerces array field values in imported entries to newline-joined strings', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        profile: { fullName: 'Ada Lovelace', email: '', headline: '', phone: '', location: '', links: [], extraInfo: '' },
+        summary: '',
+        flexSections: [{
+          name: 'EXPERIENCE',
+          items: [{
+            environment: 'experience',
+            items: [{
+              type: 'cventry',
+              fields: {
+                position: 'Senior Engineer',
+                title: 'Acme Corp',
+                date: '2020–2023',
+                highlights: ['Built system X', 'Shipped feature Y', 'Led team Z'],
+              },
+            }],
+          }],
+        }],
+      }) } }]
+    }), { status: 200 })));
+
+    const result = await requestImportFromCv(testSettings, {
+      text: 'Ada Lovelace experience',
+      sectionEnvs: [{ id: 'experience', label: 'Experience', allowedEntryTypeIds: ['cventry'] }],
+      entryTypes: [{
+        id: 'cventry',
+        label: 'CV Entry',
+        fields: [
+          { id: 'position', label: 'Position' },
+          { id: 'title', label: 'Title' },
+          { id: 'date', label: 'Date' },
+          { id: 'highlights', label: 'Highlights', multiline: true },
+        ],
+      }],
+    });
+
+    const sub = result.flexSections[0]?.items[0] as FlexSubSection;
+    const entry = sub?.items[0] as { fields: Record<string, string> };
+    expect(entry.fields.highlights).toBe('Built system X\nShipped feature Y\nLed team Z');
+    expect(entry.fields.position).toBe('Senior Engineer');
   });
 
   it('requests AI-assisted JD Match readiness reports independently from fit proposals', async () => {
