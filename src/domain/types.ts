@@ -1,6 +1,6 @@
 import type { LatexProjectFile } from './latexProject';
 
-export type TemplateId = 'classic-ats' | 'modern-compact' | 'awesome-cv';
+export type TemplateId = 'awesome-cv';
 export type TemplateKey = string;
 
 export type ProfileFieldKey =
@@ -204,6 +204,8 @@ export interface CompileArtifact {
   id: string;
   schemaVersion: 1;
   resumeId: string;
+  targetType?: 'resume' | 'fitted-cv';
+  targetId?: string;
   templateId: TemplateId;
   resumeVersion: number;
   status: 'clean' | 'compiling' | 'stale' | 'failed';
@@ -230,25 +232,54 @@ export interface FittedCvRecord {
   title: string;
   sourceResumeId: string;
   sourceVersion: number;
+  activeTemplateId: TemplateId;
+  templateLayouts: Record<TemplateKey, LayoutModule[]>;
+  templateSettings: Record<string, TemplateSettings>;
   content: ResumeContent;
   jobDescriptionId?: string;
+  proposedChanges: FittedCvChangeRecord[];
   acceptedChangeIds: string[];
   rejectedChangeIds: string[];
+  latestJdMatchReportId?: string;
   createdAt: string;
   updatedAt: string;
+  version: number;
+}
+
+export type FittedCvReviewStatus = 'pending' | 'accepted' | 'rejected' | 'manual';
+export type FittedCvRiskFlag = 'unsupported-claim' | 'verify-scope' | 'new-metric' | 'new-skill' | 'seniority-mismatch';
+
+export interface FittedCvChangeRecord {
+  id: string;
+  sourceMode: 'ai-fit-to-jd';
+  targetField: string;
+  before: string;
+  after: string;
+  rationale: string;
+  jdEvidence?: string;
+  riskFlags: FittedCvRiskFlag[];
+  status: FittedCvReviewStatus;
+  createdAt: string;
+  reviewedAt?: string;
 }
 
 export interface ScoringReportRecord {
   id: string;
   schemaVersion: 1;
   resumeId: string;
+  targetType?: 'resume' | 'fitted-cv';
+  targetId?: string;
   resumeVersion: number;
   kind: 'ats' | 'cv-quality' | 'jd-match';
+  jobDescriptionId?: string;
   methodologyVersion: string;
-  suggestions: {
-    field: string;
+  readinessPercent: number;
+  reasons: {
+    id: string;
+    field?: string;
     message: string;
     severity: 'info' | 'medium' | 'high';
+    impact?: number;
   }[];
   createdAt: string;
 }
@@ -265,17 +296,6 @@ export interface ProviderSettingsRecord {
   apiKey?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface UploadedFileAttachmentRecord {
-  id: string;
-  schemaVersion: 1;
-  resumeId: string;
-  name: string;
-  mimeType: string;
-  size: number;
-  retainedExplicitly: true;
-  createdAt: string;
 }
 
 export interface AppPreference {

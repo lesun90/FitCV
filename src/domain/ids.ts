@@ -1,4 +1,4 @@
-export const createUuid = () => {
+const createUuid = () => {
   const cryptoApi = globalThis.crypto;
   if (typeof cryptoApi?.randomUUID === 'function') return cryptoApi.randomUUID();
 

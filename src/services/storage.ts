@@ -7,7 +7,6 @@ import type {
   ProviderSettingsRecord,
   ResumeRecord,
   ScoringReportRecord,
-  UploadedFileAttachmentRecord
 } from '../domain/types';
 import { ensureTemplateLayouts } from '../domain/resume';
 
@@ -41,11 +40,6 @@ interface FitcvDb extends DBSchema {
     key: string;
     value: ProviderSettingsRecord;
   };
-  uploadedFileAttachments: {
-    key: string;
-    value: UploadedFileAttachmentRecord;
-    indexes: { 'by-resume': string };
-  };
   preferences: {
     key: string;
     value: AppPreference;
@@ -78,10 +72,6 @@ const db = () =>
       if (!database.objectStoreNames.contains('providerSettings')) {
         database.createObjectStore('providerSettings', { keyPath: 'id' });
       }
-      if (!database.objectStoreNames.contains('uploadedFileAttachments')) {
-        const uploadedFileAttachments = database.createObjectStore('uploadedFileAttachments', { keyPath: 'id' });
-        uploadedFileAttachments.createIndex('by-resume', 'resumeId');
-      }
       if (!database.objectStoreNames.contains('preferences')) {
         database.createObjectStore('preferences', { keyPath: 'id' });
       }
@@ -109,6 +99,38 @@ export const storage = {
     const database = await db();
     try {
       await database.delete('resumes', id);
+    } finally {
+      database.close();
+    }
+  },
+  async deleteResumeCascade(id: string) {
+    const database = await db();
+    try {
+      const fittedCvs = await database.getAllFromIndex('fittedCvs', 'by-source-resume', id);
+      const fittedIds = new Set(fittedCvs.map((cv) => cv.id));
+      const candidateJobDescriptionIds = new Set(fittedCvs.map((cv) => cv.jobDescriptionId).filter((value): value is string => Boolean(value)));
+      const allFittedCvs = await database.getAll('fittedCvs');
+      const retainedJobDescriptionIds = new Set(allFittedCvs
+        .filter((cv) => !fittedIds.has(cv.id))
+        .map((cv) => cv.jobDescriptionId)
+        .filter((value): value is string => Boolean(value)));
+      const artifacts = await database.getAll('artifacts');
+      const reports = await database.getAll('scoringReports');
+      const tx = database.transaction(['resumes', 'fittedCvs', 'jobDescriptions', 'artifacts', 'scoringReports'], 'readwrite');
+      await Promise.all([
+        tx.objectStore('resumes').delete(id),
+        ...fittedCvs.map((cv) => tx.objectStore('fittedCvs').delete(cv.id)),
+        ...artifacts
+          .filter((artifact) => artifact.resumeId === id || artifact.targetId === id || fittedIds.has(artifact.resumeId) || (artifact.targetId ? fittedIds.has(artifact.targetId) : false))
+          .map((artifact) => tx.objectStore('artifacts').delete(artifact.id)),
+        ...reports
+          .filter((report) => report.resumeId === id || report.targetId === id || fittedIds.has(report.resumeId) || (report.targetId ? fittedIds.has(report.targetId) : false))
+          .map((report) => tx.objectStore('scoringReports').delete(report.id)),
+        ...Array.from(candidateJobDescriptionIds)
+          .filter((jobDescriptionId) => !retainedJobDescriptionIds.has(jobDescriptionId))
+          .map((jobDescriptionId) => tx.objectStore('jobDescriptions').delete(jobDescriptionId)),
+      ]);
+      await tx.done;
     } finally {
       database.close();
     }
@@ -181,7 +203,23 @@ export const storage = {
   async saveScoringReport(scoringReport: ScoringReportRecord) {
     const database = await db();
     try {
-      await database.put('scoringReports', scoringReport);
+      const existing = await database.getAllFromIndex('scoringReports', 'by-resume', scoringReport.resumeId);
+      const targetType = scoringReport.targetType ?? 'resume';
+      const targetId = scoringReport.targetId ?? scoringReport.resumeId;
+      const tx = database.transaction('scoringReports', 'readwrite');
+      await Promise.all(existing
+        .filter((report) => {
+          const reportTargetType = report.targetType ?? 'resume';
+          const reportTargetId = report.targetId ?? report.resumeId;
+          return report.id !== scoringReport.id
+            && report.kind === scoringReport.kind
+            && reportTargetType === targetType
+            && reportTargetId === targetId
+            && (report.jobDescriptionId ?? '') === (scoringReport.jobDescriptionId ?? '');
+        })
+        .map((report) => tx.store.delete(report.id)));
+      await tx.store.put(scoringReport);
+      await tx.done;
     } finally {
       database.close();
     }
@@ -221,22 +259,6 @@ export const storage = {
         rememberApiKey: false,
         updatedAt: new Date().toISOString()
       });
-    } finally {
-      database.close();
-    }
-  },
-  async listUploadedFileAttachments() {
-    const database = await db();
-    try {
-      return database.getAll('uploadedFileAttachments');
-    } finally {
-      database.close();
-    }
-  },
-  async saveUploadedFileAttachment(attachment: UploadedFileAttachmentRecord) {
-    const database = await db();
-    try {
-      await database.put('uploadedFileAttachments', attachment);
     } finally {
       database.close();
     }
