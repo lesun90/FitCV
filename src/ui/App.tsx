@@ -1220,8 +1220,15 @@ const FlexEntryEditor = ({ entry, entryTypes, onUpdate, onRemove, onGripDown }: 
       </div>
       {typeDef?.fields.map((fd) => {
         const value = String(entry.fields[fd.id] ?? '');
-        return <WysiwygEditor key={fd.id} label={fd.label} value={value} onChange={(v) => updateField(fd.id, v)}
-          showToolbar={fd.multiline} singleLine={!fd.multiline} />;
+        if (fd.multiline) {
+          return <WysiwygEditor key={fd.id} label={fd.label} value={value} onChange={(v) => updateField(fd.id, v)} />;
+        }
+        return (
+          <div key={fd.id} className="stacked-field">
+            <span className="field-label">{fd.label}</span>
+            <AiInput ariaLabel={fd.label} assistLabel={fd.label} value={value} onValue={(v) => updateField(fd.id, v)} />
+          </div>
+        );
       })}
     </article>
   );

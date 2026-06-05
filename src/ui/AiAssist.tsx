@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { AlertCircle, Bot, Loader2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { AlertCircle, Bot, CheckCircle2, Loader2, Sparkles, X } from 'lucide-react';
 import { storage } from '../services/storage';
 import {
   getSessionApiKey,
@@ -33,6 +33,12 @@ const rewriteStyles: { value: AiRewriteStyle; label: string }[] = [
   { value: 'technical', label: 'Technical' },
   { value: 'plain-language', label: 'Plain language' },
 ];
+
+const actionLabels: Record<AiAssistAction, string> = {
+  rephrase: 'Rephrasing',
+  shorten: 'Shortening',
+  rewrite: 'Rewriting'
+};
 
 const now = () => new Date().toISOString();
 
@@ -93,7 +99,9 @@ export const AiAssistButton = ({
   surroundingText?: string;
   value: string;
 }) => {
+  const anchorRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
+  const [popoverAbove, setPopoverAbove] = useState(false);
   const [settings, setSettings] = useState<AiProviderSettings>();
   const [stage, setStage] = useState<AssistStage>('menu');
   const [pendingAction, setPendingAction] = useState<AiAssistAction>('rephrase');
@@ -102,6 +110,23 @@ export const AiAssistButton = ({
   const [selection, setSelection] = useState<TextSelection>();
   const [suggestion, setSuggestion] = useState<AiAssistSuggestion>();
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open || !anchorRef.current) return;
+    const rect = anchorRef.current.getBoundingClientRect();
+    setPopoverAbove(window.innerHeight - rect.bottom < 320);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (anchorRef.current && !anchorRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -164,6 +189,7 @@ export const AiAssistButton = ({
 
   return (
     <span
+      ref={anchorRef}
       className={anchorPosition ? 'ai-assist-anchor positioned' : 'ai-assist-anchor'}
       style={anchorPosition ? { left: anchorPosition.x, top: anchorPosition.y } : undefined}
     >
@@ -177,7 +203,7 @@ export const AiAssistButton = ({
         title={`AI assist ${fieldLabel}`}
       ><Bot /></button>
       {open && (
-        <div className="ai-popover" role="dialog" aria-label={`AI assist for ${fieldLabel}`}>
+        <div className={`ai-popover${popoverAbove ? ' ai-popover--above' : ''}`} role="dialog" aria-label={`AI assist for ${fieldLabel}`}>
           <button className="ai-close" type="button" onClick={() => setOpen(false)} aria-label="Close AI assist"><X /></button>
           {stage === 'setup' && (
             <div className="ai-popover-section">
@@ -231,8 +257,18 @@ export const AiAssistButton = ({
           )}
           {stage === 'loading' && (
             <div className="ai-popover-section ai-loading">
-              <Loader2 className="ai-spin" aria-hidden="true" />
-              <strong>Generating suggestion…</strong>
+              <div className="ai-loading-orb" aria-hidden="true">
+                <Loader2 className="ai-spin" />
+              </div>
+              <div className="ai-loading-copy">
+                <strong>{actionLabels[pendingAction]} your {fieldLabel.toLowerCase()}</strong>
+                <p>Looking for sharper wording while keeping your meaning intact.</p>
+              </div>
+              <div className="ai-loading-steps" aria-label="Suggestion progress">
+                <span><CheckCircle2 aria-hidden="true" /> Reading selection</span>
+                <span><Loader2 className="ai-spin" aria-hidden="true" /> Drafting suggestion</span>
+                <span><Sparkles aria-hidden="true" /> Waiting for your review</span>
+              </div>
             </div>
           )}
           {stage === 'error' && (
@@ -252,16 +288,28 @@ export const AiAssistButton = ({
           )}
           {stage === 'review' && suggestion && (
             <div className="ai-popover-section ai-review">
-              <strong>Review suggestion</strong>
-              <small>Original</small>
-              <code>{selectedText()}</code>
-              <small>Suggested</small>
-              <textarea aria-label="Suggested text" value={suggestion.replacement} onChange={(e) => setSuggestion({ ...suggestion, replacement: e.target.value })} />
-              {suggestion.rationale && <p>{suggestion.rationale}</p>}
+              <div className="ai-review-head">
+                <div>
+                  <strong>Review suggestion</strong>
+                  <p>Edit anything before accepting. Your document changes only when you choose Accept.</p>
+                </div>
+                <Sparkles aria-hidden="true" />
+              </div>
+              <div className="ai-suggestion-compare">
+                <div className="ai-suggestion-card">
+                  <small>Original</small>
+                  <code>{selectedText()}</code>
+                </div>
+                <div className="ai-suggestion-card suggested">
+                  <small>Suggested draft</small>
+                  <textarea aria-label="Suggested text" value={suggestion.replacement} onChange={(e) => setSuggestion({ ...suggestion, replacement: e.target.value })} />
+                </div>
+              </div>
+              {suggestion.rationale && <p className="ai-rationale">{suggestion.rationale}</p>}
               {suggestion.warning && <p className="ai-warning">{suggestion.warning}</p>}
               <div className="ai-review-actions">
-                <button className="ai-primary" type="button" aria-label="Accept suggestion" onClick={accept}>Accept</button>
-                <button type="button" onClick={() => setStage('menu')}>Try again</button>
+                <button className="ai-primary" type="button" aria-label="Accept suggestion" onClick={accept}>Accept suggestion</button>
+                <button type="button" onClick={() => setStage('menu')}>New suggestion</button>
                 <button type="button" onClick={() => setOpen(false)}>Dismiss</button>
               </div>
             </div>

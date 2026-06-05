@@ -123,17 +123,68 @@ export const buildAiAssistMessages = (request: AiAssistRequest): ChatMessage[] =
   }
 ];
 
+const stripMarkdownFence = (content: string) => {
+  const trimmed = content.trim();
+  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenceMatch?.[1]?.trim() ?? trimmed;
+};
+
+const extractJsonObject = (content: string) => {
+  const normalized = stripMarkdownFence(content);
+  if (normalized.startsWith('{') && normalized.endsWith('}')) return normalized;
+  const start = normalized.indexOf('{');
+  const end = normalized.lastIndexOf('}');
+  return start >= 0 && end > start ? normalized.slice(start, end + 1) : normalized;
+};
+
+const suggestionFromParsedValue = (value: unknown): AiAssistSuggestion | undefined => {
+  if (typeof value === 'string') return parseSuggestion(value);
+  if (!value || typeof value !== 'object') return undefined;
+  const parsed = value as Partial<AiAssistSuggestion>;
+  return {
+    replacement: String(parsed.replacement ?? '').trim(),
+    rationale: parsed.rationale ? String(parsed.rationale) : undefined,
+    warning: parsed.warning ? String(parsed.warning) : undefined
+  };
+};
+
 const parseSuggestion = (content: string): AiAssistSuggestion => {
+  const normalized = stripMarkdownFence(content);
   try {
-    const parsed = JSON.parse(content) as Partial<AiAssistSuggestion>;
-    return {
-      replacement: String(parsed.replacement ?? '').trim(),
-      rationale: parsed.rationale ? String(parsed.rationale) : undefined,
-      warning: parsed.warning ? String(parsed.warning) : undefined
-    };
+    return suggestionFromParsedValue(JSON.parse(normalized)) ?? { replacement: normalized };
   } catch {
-    return { replacement: content.trim() };
+    try {
+      return suggestionFromParsedValue(JSON.parse(extractJsonObject(normalized))) ?? { replacement: normalized };
+    } catch {
+      return { replacement: normalized };
+    }
   }
+};
+
+const extractProviderErrorMessage = async (response: Response) => {
+  const body = await response.text();
+  if (!body) return '';
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: { message?: unknown };
+      message?: unknown;
+    };
+    const message = parsed.error?.message ?? parsed.message;
+    return typeof message === 'string' ? message.trim() : body.trim();
+  } catch {
+    return body.trim();
+  }
+};
+
+const buildProviderError = async (response: Response) => {
+  if (response.status === 429) {
+    return 'AI request limit reached. Try again later or check your provider quota.';
+  }
+  const providerMessage = await extractProviderErrorMessage(response);
+  return [
+    `AI request failed with ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`,
+    providerMessage || 'Check endpoint, model, API key, and browser CORS support.'
+  ].join('. ');
 };
 
 export const getApiKeyForRequest = (settings: AiProviderSettings) => settings.apiKey || sessionApiKey;
@@ -160,7 +211,7 @@ export const requestAiSuggestion = async (
     })
   });
   if (!response.ok) {
-    throw new Error(`AI request failed with ${response.status}. Check endpoint, model, API key, and browser CORS support.`);
+    throw new Error(await buildProviderError(response));
   }
   const data = await response.json() as { choices?: { message?: { content?: string } }[] };
   const content = data.choices?.[0]?.message?.content;

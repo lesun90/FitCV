@@ -143,6 +143,7 @@ export const WysiwygEditor = ({ label, ariaLabel, value, placeholder, onChange, 
         value={value}
         onApply={(next) => {
           lastLatexRef.current = next;
+          editor?.commands.setContent(latexToTiptap(next), { emitUpdate: false, parseOptions: { preserveWhitespace: 'full' } });
           onChange(next);
           editor?.commands.focus();
         }}

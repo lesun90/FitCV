@@ -3923,7 +3923,10 @@ pre {
 }
 
 .ai-assist-trigger:hover {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+  color: #1c222b;
   transform: scale(1.04);
 }
 
@@ -3959,13 +3962,25 @@ pre {
   border-radius: var(--radius);
   box-shadow: var(--shadow-md);
   color: var(--ink);
-  padding: 12px;
+  padding: 14px;
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
   transform-origin: top right;
-  width: min(300px, calc(100vw - 32px));
+  width: min(360px, calc(100vw - 32px));
   z-index: 300;
+}
+
+@keyframes ai-appear-above {
+  from { opacity: 0; transform: translateY(5px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.ai-popover--above {
+  animation-name: ai-appear-above;
+  bottom: calc(100% + 8px);
+  top: auto;
+  transform-origin: bottom right;
 }
 
 .ai-settings {
@@ -3991,7 +4006,7 @@ pre {
 .ai-popover-section,
 .ai-settings {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .ai-popover-section p {
@@ -4015,8 +4030,8 @@ pre {
   color: var(--ink);
   cursor: pointer;
   font-size: 13px;
-  min-height: 32px;
-  padding: 0 10px;
+  min-height: 40px;
+  padding: 0 12px;
   transition: background 100ms ease;
 }
 
@@ -4119,16 +4134,17 @@ pre {
 }
 
 .ai-popover code {
-  background: var(--surface-soft);
+  background: #f8fafc;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   color: var(--ink);
   display: block;
   font-family: var(--mono);
   font-size: 12px;
+  line-height: 1.5;
   max-height: 96px;
   overflow: auto;
-  padding: 8px;
+  padding: 9px 10px;
   white-space: pre-wrap;
 }
 
@@ -4167,12 +4183,14 @@ pre {
 
 .ai-review textarea,
 .ai-instruction textarea {
-  background: var(--surface-soft);
+  background: #fff;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   color: var(--ink);
-  min-height: 84px;
-  padding: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  min-height: 104px;
+  padding: 9px 10px;
   resize: vertical;
   width: 100%;
 }
@@ -4201,20 +4219,99 @@ pre {
 }
 
 .ai-loading {
-  align-items: center;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 0;
-  text-align: center;
+  gap: 14px;
+  padding: 2px 0 4px;
 }
 
 .ai-spin {
   animation: latex-spin 0.75s linear infinite;
-  color: var(--faint);
+  color: currentColor;
   flex-shrink: 0;
-  height: 20px;
-  width: 20px;
+  height: 18px;
+  width: 18px;
+}
+
+.ai-loading-orb {
+  align-items: center;
+  background: var(--green-soft);
+  border: 1px solid rgba(22, 118, 90, 0.2);
+  border-radius: 999px;
+  color: var(--green-dark);
+  display: inline-flex;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+
+.ai-loading-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-loading-steps {
+  background: var(--surface-warm);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+}
+
+.ai-loading-steps span {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  line-height: 1.3;
+}
+
+.ai-loading-steps svg {
+  color: var(--green);
+  height: 15px;
+  width: 15px;
+}
+
+.ai-review-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  padding-right: 30px;
+}
+
+.ai-review-head > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ai-review-head > svg {
+  background: var(--blue-soft);
+  border-radius: 999px;
+  color: var(--blue);
+  flex: 0 0 auto;
+  height: 30px;
+  padding: 7px;
+  width: 30px;
+}
+
+.ai-suggestion-compare {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-suggestion-card {
+  background: var(--surface-warm);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: grid;
+  gap: 6px;
+  padding: 9px;
+}
+
+.ai-suggestion-card.suggested {
+  background: #f8fbfa;
+  border-color: rgba(22, 118, 90, 0.28);
 }
 
 .ai-quick-actions {
@@ -4264,6 +4361,14 @@ pre {
   border-color: transparent;
   color: var(--muted);
   transform: none;
+}
+
+.ai-rationale {
+  background: var(--blue-soft);
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: var(--radius);
+  color: #1e3a8a;
+  padding: 8px 10px;
 }
 
 .ai-warning {
