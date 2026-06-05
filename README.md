@@ -76,7 +76,62 @@ Clearing Docker volumes does not clear resume data because FitCV stores working 
 
 ## ATS Readiness
 
-FitCV documents the deterministic ATS Readiness methodology in [`docs/ats-readiness.md`](docs/ats-readiness.md). It explains the current `ats-deterministic-v2` rules, weights, reason IDs, and limits.
+ATS Readiness estimates whether a resume can be parsed cleanly by Applicant Tracking Systems. The check is deterministic and runs locally. No AI is involved.
+
+Current methodology: `ats-deterministic-v2`
+
+**Scoring model.** FitCV starts at 100 and subtracts weighted penalties for parser risks. The result clamps to 0-100. A missing name blocks PDF compilation entirely.
+
+Each issue reports an ID, affected field, severity (`info` / `medium` / `high`), and penalty.
+
+### Contact Extraction
+
+ATS parsers need obvious contact fields near the top of the resume.
+
+| Reason ID | Impact | Severity | Trigger |
+| --- | ---: | --- | --- |
+| `missing-name` | -30 | high | `content.profile.fullName` is empty |
+| `missing-email` | -15 | medium | `content.profile.email` is empty |
+| `missing-phone-or-location` | -6 | medium | Phone and location are both empty |
+| `unclear-link` | -8 | medium | A profile link is neither a URL nor a recognizable domain |
+| `hidden-contact-field` | -8 | medium | Email, phone, location, or links are hidden from the rendered resume |
+
+### Section Anchors
+
+ATS parsers depend on familiar section headings. FitCV recognizes standard anchors for Experience, Skills, Education, Projects, Research, and Publications.
+
+| Reason ID | Impact | Severity | Trigger |
+| --- | ---: | --- | --- |
+| `missing-experience-section` | -18 | high | No visible section matches Experience or Employment |
+| `missing-skills-section` | -12 | medium | No visible section matches Skills, Technical Skills, Core Skills, or Technologies |
+| `missing-supporting-section` | -8 | medium | No Education, Projects, Research, or Publications section exists |
+| `nonstandard-section-heading` | -6 each | medium | A visible section uses a non-standard anchor or a risky label such as `MY JOURNEY`, `THE TOOLKIT`, `ABOUT ME`, or `WHAT I DO` |
+| `empty-section` | -8 each | medium | A visible section has fewer than 12 characters of parseable text |
+
+### Content Structure
+
+These checks catch resumes that appear complete but still parse poorly.
+
+| Reason ID | Impact | Severity | Trigger |
+| --- | ---: | --- | --- |
+| `placeholder-text` | -18 | high | Template placeholders remain, such as `Lorem ipsum`, `Company Name`, `Tool A`, `Month Year`, or `First Last` |
+| `thin-bullet-structure` | -10 | medium | Experience exists but has fewer than two substantial bullet lines (a substantial bullet has at least four words) |
+| `unclear-date-format` | -8 | medium | A date field uses vague text such as `Summer '23`, or lacks a recognizable year, month/year, or present value |
+| `long-summary` | -10 | medium | Summary exceeds 700 characters |
+
+### PDF Text Smoke Test
+
+FitCV checks generated PDF text when available to confirm key content survives export.
+
+| Reason ID | Impact | Severity | Trigger |
+| --- | ---: | --- | --- |
+| `pdf-text-not-tested` | -8 | medium | The current resume version has no generated text extraction result |
+| `pdf-text-present` | 0 | info | Generated text exists and includes enough key resume content |
+| `pdf-text-missing-key-content` | -16 | high | Generated text exists but is missing key content such as name, email, section labels, or early section text |
+
+### Scope
+
+ATS Readiness does not score writing quality, keyword match, candidate fit, or how any specific ATS vendor ranks the resume. Use CV Quality Readiness for writing quality. Use JD Match Readiness when a job description is available.
 
 ## Verification
 
