@@ -5,10 +5,10 @@ services:
     command: npm run dev
     environment:
       FITCV_HOST: 0.0.0.0
-      FITCV_PORT: ${FITCV_PORT:-5173}
+      FITCV_PORT: ${FITCV_PORT:-1512}
       FITCV_USE_POLLING: ${FITCV_USE_POLLING:-true}
     ports:
-      - "${FITCV_PORT:-5173}:${FITCV_PORT:-5173}"
+      - "${FITCV_PORT:-1512}:${FITCV_PORT:-1512}"
     volumes:
       - .:/app
       - fitcv_node_modules:/app/node_modules

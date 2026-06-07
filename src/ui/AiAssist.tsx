@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { AlertCircle, Bot, CheckCircle2, Loader2, Sparkles, X } from 'lucide-react';
 import { storage } from '../services/storage';
 import type { GeminiQuotaSnapshot } from '../domain/types';
@@ -25,6 +25,12 @@ type TextSelection = {
 type AssistAnchorPosition = {
   x: number;
   y: number;
+};
+
+type AssistPopoverPosition = {
+  bottom?: number;
+  left: number;
+  top?: number;
 };
 
 type AssistStage = 'menu' | 'setup' | 'settings' | 'disclosure' | 'loading' | 'review' | 'error';
@@ -120,6 +126,7 @@ export const AiAssistButton = ({
   const anchorRef = useRef<HTMLSpanElement>(null);
   const [open, setOpen] = useState(false);
   const [popoverAbove, setPopoverAbove] = useState(false);
+  const [popoverPosition, setPopoverPosition] = useState<AssistPopoverPosition>();
   const [settings, setSettings] = useState<AiProviderSettings>();
   const [stage, setStage] = useState<AssistStage>('menu');
   const [pendingAction, setPendingAction] = useState<AiAssistAction>('rephrase');
@@ -137,11 +144,38 @@ export const AiAssistButton = ({
     onClose?.();
   };
 
-  useEffect(() => {
-    if (!open || !anchorRef.current) return;
+  const updatePopoverPosition = useCallback(() => {
+    if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
-    setPopoverAbove(window.innerHeight - rect.bottom < 320);
-  }, [open]);
+    const viewportMargin = 16;
+    const popoverWidth = Math.min(360, Math.max(0, window.innerWidth - viewportMargin * 2));
+    const maxLeft = Math.max(viewportMargin, window.innerWidth - popoverWidth - viewportMargin);
+    const left = Math.min(Math.max(viewportMargin, rect.right - popoverWidth), maxLeft);
+    const shouldPlaceAbove = window.innerHeight - rect.bottom < 320 && rect.top > window.innerHeight - rect.bottom;
+
+    setPopoverAbove(shouldPlaceAbove);
+    setPopoverPosition(shouldPlaceAbove
+      ? { left, bottom: Math.max(viewportMargin, window.innerHeight - rect.top + 8) }
+      : { left, top: Math.min(rect.bottom + 8, window.innerHeight - viewportMargin) });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPopoverPosition(undefined);
+      return;
+    }
+    updatePopoverPosition();
+  }, [open, updatePopoverPosition]);
+
+  useEffect(() => {
+    if (!open) return;
+    window.addEventListener('resize', updatePopoverPosition);
+    window.addEventListener('scroll', updatePopoverPosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePopoverPosition);
+      window.removeEventListener('scroll', updatePopoverPosition, true);
+    };
+  }, [open, updatePopoverPosition]);
 
   useEffect(() => {
     if (!open) return;
@@ -213,6 +247,15 @@ export const AiAssistButton = ({
 
   if (!selectionActive && !open) return null;
 
+  const popoverStyle: CSSProperties | undefined = popoverPosition
+    ? {
+      bottom: popoverPosition.bottom,
+      left: popoverPosition.left,
+      top: popoverPosition.top,
+      width: 'min(360px, calc(100vw - 32px))'
+    }
+    : undefined;
+
   return (
     <span
       ref={anchorRef}
@@ -229,7 +272,7 @@ export const AiAssistButton = ({
         title={`AI assist ${fieldLabel}`}
       ><Bot /></button>
       {open && (
-        <div className={`ai-popover${popoverAbove ? ' ai-popover--above' : ''}`} role="dialog" aria-label={`AI assist for ${fieldLabel}`}>
+        <div className={`ai-popover${popoverAbove ? ' ai-popover--above' : ''}`} style={popoverStyle} role="dialog" aria-label={`AI assist for ${fieldLabel}`}>
           <button className="ai-close" type="button" onClick={closeAssist} aria-label="Close AI assist"><X /></button>
           {stage === 'setup' && (
             <div className="ai-popover-section">

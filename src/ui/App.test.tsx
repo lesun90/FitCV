@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
+import { AiAssistButton } from './AiAssist';
 import { formatPdfPreviewUrl, highlightLatexSource, parseLatexDiagnostics, renderRichLatexText } from './latexUtils';
 
 vi.mock('../services/pdf', () => ({
@@ -330,6 +331,47 @@ describe('FitCV UI shell', () => {
 
     expect(screen.queryByText('AI setup required')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'AI assist Name' })).not.toBeInTheDocument();
+  });
+
+  it('clamps AI assist popovers to the viewport instead of the editor pane', async () => {
+    const originalWidth = window.innerWidth;
+    const originalHeight = window.innerHeight;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 760 });
+
+    render(
+      <AiAssistButton
+        fieldLabel="Profile highlight item"
+        selectionActive
+        value="Led Q4 launch for 12 vehicles across multiple teams."
+        onApply={vi.fn()}
+      />
+    );
+
+    const trigger = screen.getByRole('button', { name: 'AI assist Profile highlight item' });
+    const anchor = trigger.parentElement as HTMLSpanElement;
+    vi.spyOn(anchor, 'getBoundingClientRect').mockReturnValue({
+      bottom: 456,
+      height: 36,
+      left: 960,
+      right: 996,
+      top: 420,
+      width: 36,
+      x: 960,
+      y: 420,
+      toJSON: () => ({})
+    } as DOMRect);
+
+    fireEvent.click(trigger);
+
+    const popover = await screen.findByRole('dialog', { name: 'AI assist for Profile highlight item' });
+    await waitFor(() => {
+      expect(popover.style.left).toBe('624px');
+      expect(popover.style.bottom).toBe('348px');
+    });
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalWidth });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: originalHeight });
   });
 
   it('reviews AI suggestions before applying them to a selected editor field', async () => {

@@ -11,7 +11,15 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:1512`.
+
+The dev server binds to `0.0.0.0` by default, so other machines on your network can reach it at `http://<your-lan-ip>:1512`. If a connection from another machine times out, allow the port through your firewall, e.g. on Ubuntu:
+
+```bash
+sudo ufw allow 1512/tcp
+```
+
+Set `FITCV_HOST=127.0.0.1` to restrict the server to localhost only.
 
 ## Local Docker Runtime
 
@@ -21,15 +29,15 @@ FitCV can run as a single Docker Compose service for local development:
 docker compose up
 ```
 
-Default URL: `http://localhost:5173`
+Default URL: `http://localhost:1512`
 
 Default variables:
 
 - `FITCV_HOST=0.0.0.0` inside Docker so Vite is reachable from the host.
-- `FITCV_PORT=5173` for the container and host port.
+- `FITCV_PORT=1512` for the container and host port.
 - `FITCV_USE_POLLING=true` so file watching works through mounted volumes.
 
-Use another port when `5173` is busy:
+Use another port when `1512` is busy:
 
 ```bash
 FITCV_PORT=5174 docker compose up
@@ -55,7 +63,7 @@ docker compose up
 
 Live reload uses the source mount plus Vite file watching. On macOS, Windows, and WSL, keep `FITCV_USE_POLLING=true` if host file changes are not detected. On Linux you can try `FITCV_USE_POLLING=false docker compose up`.
 
-Clearing Docker volumes does not clear resume data because FitCV stores working resumes in browser IndexedDB. To clear local FitCV data, use your browser site settings for `localhost:5173` and clear site data/storage. In Chrome and Edge this is under DevTools Application > Storage; in Firefox use Settings > Privacy & Security > Cookies and Site Data or DevTools Storage.
+Clearing Docker volumes does not clear resume data because FitCV stores working resumes in browser IndexedDB. To clear local FitCV data, use your browser site settings for `localhost:1512` and clear site data/storage. In Chrome and Edge this is under DevTools Application > Storage; in Firefox use Settings > Privacy & Security > Cookies and Site Data or DevTools Storage.
 
 ## Privacy Boundaries
 
