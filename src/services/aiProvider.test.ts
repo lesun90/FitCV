@@ -7,6 +7,7 @@ import {
   clearSessionApiKey,
   isAiConfigured,
   requestFitToJdDraft,
+  requestProviderConnectionCheck,
   requestImportFromCv,
   requestJdMatchReport,
   requestReadinessReport,
@@ -128,6 +129,15 @@ describe('AI provider service', () => {
       fieldLabel: 'Summary',
       text: 'Built reliable autonomy systems.'
     })).rejects.toThrow('AI request limit reached. Try again later or check your provider quota.');
+  });
+
+  it('surfaces provider error details when connection checks fail', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: { message: 'The model cv-model does not exist for this API key.' }
+    }), { status: 404, statusText: 'Not Found' })));
+
+    await expect(requestProviderConnectionCheck(testSettings))
+      .rejects.toThrow('The model cv-model does not exist for this API key.');
   });
 
   it('isAiConfigured returns false when endpoint or model is blank', () => {

@@ -7,7 +7,6 @@ import {
   ChevronUp,
   ChevronDown,
   Clock3,
-  Copy,
   Download,
   Eye,
   EyeOff,
@@ -28,7 +27,7 @@ import {
 import { exportFitcvArchive, importFitcvArchive } from '../domain/archive';
 import { buildAtsReadinessReport } from '../domain/checks';
 import { applyFittedCvChange, createFittedCvDraft, fittedCvHasUnreviewedChanges, markFittedCvChangeReviewed } from '../domain/fittedCv';
-import { clearReviewMarkersForField, createResume, duplicateResume, ensureTemplateLayouts, renameResume, sampleResume, starterResume, switchTemplate, touchResume } from '../domain/resume';
+import { clearReviewMarkersForField, createResume, ensureTemplateLayouts, renameResume, sampleResume, starterResume, switchTemplate, touchResume } from '../domain/resume';
 import { templates, getTemplate } from '../domain/templates';
 import type {
   CompileArtifact,
@@ -461,7 +460,6 @@ export const App = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const createBlank = (templateId: TemplateId) => { void save(starterResume(templateId)); setMode('editor'); setShowCreateModal(false); };
-  const cloneActive = () => { if (!active) return; void save(duplicateResume(active)); setMode('editor'); };
   const openResume = (resume: ResumeRecord) => { setActiveId(resume.id); setActiveFittedId(undefined); setMode('editor'); void compile(resume); };
   const openFittedCv = (fittedCv: FittedCvRecord) => {
     setActiveId(fittedCv.sourceResumeId);
@@ -597,7 +595,7 @@ export const App = () => {
       <>
         <Dashboard
           resumes={resumes} fittedCvs={fittedCvs} active={active} reviewCount={dashboardReviewCount} readinessReports={readinessReports}
-          busy={busy} error={error} onCreate={() => setShowCreateModal(true)} onDuplicate={cloneActive} onOpen={openResume}
+          busy={busy} error={error} onCreate={() => setShowCreateModal(true)} onOpen={openResume}
           onOpenFitted={openFittedCv} onDelete={deleteResume} onImportArchive={importArchive} onExportArchive={exportArchive}
           onImportCvWithAi={() => void openImportCvModal()}
         />
@@ -768,9 +766,9 @@ const ImportResumeModal = ({ onImport, onClose }: { onImport: (file: File, templ
 
 // --- Dashboard ---
 
-const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, busy, error, onCreate, onDuplicate, onOpen, onOpenFitted, onDelete, onImportArchive, onExportArchive, onImportCvWithAi }: {
+const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, busy, error, onCreate, onOpen, onOpenFitted, onDelete, onImportArchive, onExportArchive, onImportCvWithAi }: {
   resumes: ResumeRecord[]; fittedCvs: FittedCvRecord[]; active?: ResumeRecord; reviewCount: number; readinessReports: ScoringReportRecord[];
-  busy: string; error: string; onCreate: () => void; onDuplicate: () => void; onOpen: (resume: ResumeRecord) => void;
+  busy: string; error: string; onCreate: () => void; onOpen: (resume: ResumeRecord) => void;
   onOpenFitted: (fittedCv: FittedCvRecord) => void;
   onDelete: (id: string) => void; onImportArchive: (file: File) => void; onExportArchive: () => void;
   onImportCvWithAi: () => void;
@@ -788,8 +786,8 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, 
           <p>Base resumes stay canonical. Open one to edit content, tune layout, compile a local PDF, or duplicate it for a job-specific fit.</p>
         </div>
       </div>
-      {busy && <div className="notice">{busy}</div>}
-      {error && <div className="notice error">{error}</div>}
+      {busy && <div className="notice" role="status">{busy}</div>}
+      {error && <div className="notice error" role="alert">{error}</div>}
       <div className="dashboard-grid">
         <aside className="dashboard-rail">
           <button className="create-card" onClick={onCreate}>
@@ -807,7 +805,6 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, 
           </section>
           <section className="filter-card" aria-label="Library actions">
             <h2>Actions</h2>
-            <button className="filter-action" onClick={onDuplicate}><Copy />Duplicate active</button>
             <button className="filter-action" onClick={onExportArchive}><Download />Export backup</button>
             <label className="filter-action"><FileArchive />Restore backup<input type="file" accept=".fitcv,application/json" hidden onChange={(e) => e.target.files?.[0] && onImportArchive(e.target.files[0])} /></label>
           </section>
@@ -852,29 +849,46 @@ const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate,
   const activeLayout = active.templateLayouts[active.activeTemplateId] ?? [];
   const selectedModule = activeLayout.find((m) => m.id === selectedModuleId) ?? activeLayout[0];
   const pendingScrollField = useRef<string>();
+  const focusField = (field: string) => {
+    setTimeout(() => {
+      const el = document.querySelector(`[data-field="${field}"]`) as HTMLElement | null;
+      if (el) {
+        el.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+        (el.querySelector('input, textarea') as HTMLElement | null)?.focus();
+      }
+    }, 50);
+  };
 
   useEffect(() => {
     const field = pendingScrollField.current;
     if (!field) return;
     pendingScrollField.current = undefined;
-    setTimeout(() => {
-      const el = document.querySelector(`[data-field="${field}"]`) as HTMLElement | null;
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        (el.querySelector('input, textarea') as HTMLElement | null)?.focus();
-      }
-    }, 50);
+    focusField(field);
   }, [selectedModuleId]);
 
   const navigateToField = (field: string) => {
     if (field.startsWith('content.profile') || field.startsWith('content.summary')) {
       const module = activeLayout.find((m) => m.kind === 'section' && m.section === 'summary') ?? activeLayout[0];
-      if (module) { pendingScrollField.current = field; setSelectedModuleId(module.id); }
+      if (module) {
+        pendingScrollField.current = field;
+        setSelectedModuleId(module.id);
+        if (selectedModuleId === module.id) {
+          pendingScrollField.current = undefined;
+          focusField(field);
+        }
+      }
     } else {
       const match = field.match(/^content\.flexSections\.([^.]+)/);
       if (match) {
         const module = activeLayout.find((m) => m.kind === 'flex-section' && m.flexSectionId === match[1]);
-        if (module) { pendingScrollField.current = field; setSelectedModuleId(module.id); }
+        if (module) {
+          pendingScrollField.current = field;
+          setSelectedModuleId(module.id);
+          if (selectedModuleId === module.id) {
+            pendingScrollField.current = undefined;
+            focusField(field);
+          }
+        }
       }
     }
   };
@@ -930,8 +944,8 @@ const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate,
           <button className="ghost-button danger" onClick={onDelete}><Trash2 /></button>
         </div>
       </header>
-      {error && <div className="notice editor-notice">{error}</div>}
-      {exportBlocked && <div className="notice editor-notice">{unreviewedFitChangeCount} unreviewed change{unreviewedFitChangeCount !== 1 ? 's' : ''} must be reviewed before export.</div>}
+      {error && <div className="notice editor-notice" role="alert">{error}</div>}
+      {exportBlocked && <div className="notice editor-notice" role="alert">{unreviewedFitChangeCount} unreviewed change{unreviewedFitChangeCount !== 1 ? 's' : ''} must be reviewed before export.</div>}
       {activeFittedCv && <FittedChangeReviewPanel fittedCv={activeFittedCv} onReview={onReviewFittedChange} />}
       <section className="editor-board" aria-label="Editor workbench"
         onBlur={(e) => {
@@ -959,6 +973,7 @@ const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate,
       {drawerDimension !== null && (
         <ReadinessDrawer
           dimension={drawerDimension}
+          busy={busy}
           atsReadiness={atsReadiness}
           cvQualityReadiness={cvQualityReadiness}
           jdMatchReadiness={jdMatchReadiness}
@@ -1042,8 +1057,14 @@ const ArcGauge = ({ score, variant }: { score: number | undefined; variant: Retu
     const el = fillRef.current;
     if (!el || score === undefined) return;
     const target = ARC_LENGTH * (1 - score / 100);
+    const reduceMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     el.style.transition = 'none';
     el.style.strokeDashoffset = String(ARC_LENGTH);
+    if (reduceMotion) {
+      el.style.strokeDashoffset = String(target);
+      return;
+    }
     const id = requestAnimationFrame(() => {
       if (!fillRef.current) return;
       fillRef.current.style.transition = 'stroke-dashoffset 600ms cubic-bezier(0.34, 1.56, 0.64, 1)';
@@ -1080,17 +1101,33 @@ const ArcGauge = ({ score, variant }: { score: number | undefined; variant: Retu
   );
 };
 
-const DRAWER_META: Record<ReadinessDimension, { title: string; tabLabel: string; runLabel: string }> = {
-  ats: { title: 'ATS Readiness', tabLabel: 'ATS',        runLabel: 'Run ATS Check'  },
-  cvq: { title: 'CV Quality',    tabLabel: 'CV Quality', runLabel: 'Run CV Quality' },
-  jd:  { title: 'JD Match',      tabLabel: 'JD Match',   runLabel: 'Run JD Match'   },
+const DRAWER_META: Record<ReadinessDimension, { title: string; tabLabel: string; runLabel: string; disclosure: string }> = {
+  ats: {
+    title: 'ATS Readiness',
+    tabLabel: 'ATS',
+    runLabel: 'Run ATS Check',
+    disclosure: 'ATS Readiness runs locally and does not send resume content to AI.'
+  },
+  cvq: {
+    title: 'CV Quality',
+    tabLabel: 'CV Quality',
+    runLabel: 'Run CV Quality',
+    disclosure: 'CV Quality sends resume text to your configured AI provider for analysis.'
+  },
+  jd: {
+    title: 'JD Match',
+    tabLabel: 'JD Match',
+    runLabel: 'Run JD Match',
+    disclosure: 'JD Match sends fitted CV text and the job description to your configured AI provider.'
+  },
 };
 
 const ReadinessDrawer = ({
-  dimension, atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription,
+  dimension, busy, atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription,
   onDimensionChange, onClose, onRunAts, onRunCvQuality, onRunJdMatch, onNavigate,
 }: {
   dimension: ReadinessDimension;
+  busy: string;
   atsReadiness?: ScoringReportRecord;
   cvQualityReadiness?: ScoringReportRecord;
   jdMatchReadiness?: ScoringReportRecord;
@@ -1121,8 +1158,10 @@ const ReadinessDrawer = ({
 
   const meta = DRAWER_META[dimension];
   const tabs: ReadinessDimension[] = ['ats', 'cvq', ...(hasJobDescription ? ['jd' as const] : [])];
+  const isBusy = Boolean(busy);
 
   const runActive = () => {
+    if (isBusy) return;
     if (dimension === 'ats') onRunAts();
     else if (dimension === 'cvq') onRunCvQuality();
     else onRunJdMatch();
@@ -1132,6 +1171,8 @@ const ReadinessDrawer = ({
     const r = d === 'ats' ? atsReadiness : d === 'cvq' ? cvQualityReadiness : jdMatchReadiness;
     return r?.reasons.filter((reason) => reason.severity !== 'info').length ?? 0;
   };
+
+  const groupedReasons = activeReport ? groupReadinessReasons(activeReport.reasons) : [];
 
   return (
     <>
@@ -1176,39 +1217,50 @@ const ReadinessDrawer = ({
         </div>
         <div className="readiness-drawer-body">
           <ArcGauge key={dimension} score={activeReport?.readinessPercent} variant={pillVariant(activeReport)} />
+          <p className="readiness-drawer-disclosure">{meta.disclosure}</p>
           {activeReport ? (
             activeReport.reasons.length > 0 ? (
               <div className="readiness-drawer-issues">
-                <div className="readiness-drawer-section-lbl">Issues · {activeReport.reasons.length}</div>
-                {activeReport.reasons.map((reason) => {
-                  const navigable = isNavigableField(reason.field) && !!onNavigate;
-                  return (
-                    <div
-                      key={`${reason.id}-${reason.field ?? 'resume'}`}
-                      className={`readiness-drawer-issue${navigable ? ' navigable' : ''}`}
-                      {...(navigable ? {
-                        role: 'button',
-                        tabIndex: 0,
-                        onClick: () => { onNavigate!(reason.field!); onClose(); },
-                        onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') { onNavigate!(reason.field!); onClose(); } },
-                      } : {})}
-                    >
-                      <span className={`readiness-drawer-issue-sev ${reason.severity}`}>
-                        {reason.severity === 'high' ? 'High' : reason.severity === 'medium' ? 'Med' : 'Info'}
-                      </span>
-                      <div className="readiness-drawer-issue-body">
-                        <div className="readiness-drawer-issue-msg">{reason.message}</div>
-                        {reason.impact !== undefined && (
-                          <div className="readiness-drawer-issue-impact">{reason.impact} pts</div>
-                        )}
-                      </div>
-                      {navigable && <ArrowRight className="readiness-drawer-issue-arrow" aria-hidden="true" />}
-                    </div>
-                  );
-                })}
+                {groupedReasons.map((group) => (
+                  <section key={group.severity} className="readiness-drawer-issue-group" aria-label={`${group.label} findings`}>
+                    <div className="readiness-drawer-section-lbl">{group.label} · {group.reasons.length}</div>
+                    {group.reasons.map((reason, index) => {
+                      const navigable = isNavigableField(reason.field) && !!onNavigate;
+                      const goToReason = () => { onNavigate!(reason.field!); onClose(); };
+                      return (
+                        <div
+                          key={`${reason.id}-${reason.field ?? 'resume'}-${index}`}
+                          className={`readiness-drawer-issue${navigable ? ' navigable' : ''}`}
+                          {...(navigable ? {
+                            role: 'button',
+                            tabIndex: 0,
+                            onClick: goToReason,
+                            onKeyDown: (e: React.KeyboardEvent) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                goToReason();
+                              }
+                            },
+                          } : {})}
+                        >
+                          <span className={`readiness-drawer-issue-sev ${reason.severity}`}>
+                            {reason.severity === 'high' ? 'High' : reason.severity === 'medium' ? 'Med' : 'Info'}
+                          </span>
+                          <div className="readiness-drawer-issue-body">
+                            <div className="readiness-drawer-issue-msg">{reason.message}</div>
+                            {reason.impact !== undefined && (
+                              <div className="readiness-drawer-issue-impact">{reason.impact} pts</div>
+                            )}
+                          </div>
+                          {navigable && <ArrowRight className="readiness-drawer-issue-arrow" aria-hidden="true" />}
+                        </div>
+                      );
+                    })}
+                  </section>
+                ))}
               </div>
             ) : (
-              <p className="readiness-drawer-empty">No issues found — looking good.</p>
+              <p className="readiness-drawer-empty">No issues found. Looking good.</p>
             )
           ) : (
             <p className="readiness-drawer-empty">
@@ -1217,14 +1269,27 @@ const ReadinessDrawer = ({
                 : 'Run this check to see results.'}
             </p>
           )}
-          <button className="readiness-drawer-run" type="button" onClick={runActive}>
-            <RotateCw />{meta.runLabel}
+          <button className="readiness-drawer-run" type="button" disabled={isBusy} onClick={runActive}>
+            {isBusy ? <Loader2 className="spin" /> : <RotateCw />}{isBusy ? busy : meta.runLabel}
           </button>
         </div>
       </aside>
     </>
   );
 };
+
+const groupReadinessReasons = (reasons: ScoringReportRecord['reasons']) => (
+  [
+    { severity: 'high' as const, label: 'High' },
+    { severity: 'medium' as const, label: 'Medium' },
+    { severity: 'info' as const, label: 'Info' },
+  ]
+    .map((group) => ({
+      ...group,
+      reasons: reasons.filter((reason) => reason.severity === group.severity),
+    }))
+    .filter((group) => group.reasons.length > 0)
+);
 
 const FitToJdModal = ({ defaultTitle, busy, onCreate, onClose }: {
   defaultTitle: string;
@@ -2017,6 +2082,10 @@ const FlexSubSectionEditor = ({ sub, sectionEnvs, entryTypes, onUpdate, onRemove
 }) => {
   const envDef = sectionEnvs.find((e) => e.id === sub.environment);
   const allowedEntryTypes = entryTypes.filter((et) => envDef?.allowedEntryTypeIds.includes(et.id) ?? true);
+  const usesInlineHeading = sub.environment === 'cvsubsection' || sub.environment === 'cvitems';
+  const subSectionLabel = sub.environment === 'cvitems'
+    ? 'CV Subsection'
+    : (envDef?.label ?? sub.environment);
   const [addOpen, setAddOpen] = useState(false);
 
   const addEntry = (typeId: string) => {
@@ -2047,12 +2116,17 @@ const FlexSubSectionEditor = ({ sub, sectionEnvs, entryTypes, onUpdate, onRemove
     <article className={`item-card sub-section-card${sub.hidden ? ' item-hidden' : ''}`}>
       <div className="item-card-head">
         <GripVertical className="drag-grip" aria-hidden="true" onPointerDown={onGripDown} />
-        <strong>{envDef?.label ?? sub.environment}</strong>
+        <strong>{subSectionLabel}</strong>
         <button className="ghost-button item-hide" aria-label={sub.hidden ? 'Show sub-section' : 'Hide sub-section'} onClick={() => onUpdate({ ...sub, hidden: !sub.hidden })}>
           {sub.hidden ? <EyeOff /> : <Eye />}
         </button>
         <button className="ghost-button danger item-delete" aria-label="Remove sub-section" onClick={onRemove}><Trash2 /></button>
       </div>
+
+      {usesInlineHeading && (
+        <WysiwygEditor label="Subsection name" value={sub.heading ?? ''} showToolbar={false} singleLine={true}
+          onChange={(v) => onUpdate({ ...sub, heading: v })} />
+      )}
 
       {sub.items.length === 0 && !addOpen && (
         <div className="empty-section-hint empty-section-hint-sm">
@@ -2104,7 +2178,7 @@ const FlexSubSectionEditor = ({ sub, sectionEnvs, entryTypes, onUpdate, onRemove
               {allowedEntryTypes.map((et) => (
                 <button key={et.id} className="add-type-pill" onClick={() => addEntry(et.id)}>{et.label}</button>
               ))}
-              {envDef?.allowsSubsectionHeading && (
+              {envDef?.allowsSubsectionHeading && !usesInlineHeading && (
                 <button className="add-type-pill add-type-pill-secondary" onClick={() => { addHeading(); setAddOpen(false); }}>Heading</button>
               )}
             </div>
@@ -2116,7 +2190,7 @@ const FlexSubSectionEditor = ({ sub, sectionEnvs, entryTypes, onUpdate, onRemove
                 <Plus />{allowedEntryTypes.length === 1 ? allowedEntryTypes[0].label : 'Entry'}{allowedEntryTypes.length > 1 && <ChevronDown />}
               </button>
             )}
-            {envDef?.allowsSubsectionHeading && (
+            {envDef?.allowsSubsectionHeading && !usesInlineHeading && (
               <button className="add-footer-btn add-footer-btn-sm add-footer-btn-ghost" onClick={addHeading}>
                 <Plus />Heading
               </button>
@@ -2245,6 +2319,7 @@ const AiInput = ({
         fieldLabel={assistLabel}
         selectionActive={selectionActive}
         value={draft}
+        onClose={() => setSelectionActive(false)}
         getValue={() => inputRef.current?.value ?? draft}
         getSelection={() => ({
           start: inputRef.current?.selectionStart ?? draft.length,

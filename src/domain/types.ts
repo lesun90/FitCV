@@ -98,6 +98,7 @@ export interface FlexEntry {
 export interface FlexSubSection {
   id: string;
   environment: string;
+  heading?: string;
   items: (FlexEntry | CvSubsectionHeading)[];
   hidden?: boolean;
 }

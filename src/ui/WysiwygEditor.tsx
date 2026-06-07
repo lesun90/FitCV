@@ -141,6 +141,7 @@ export const WysiwygEditor = ({ label, ariaLabel, value, placeholder, onChange, 
         fieldLabel={label ?? ariaLabel ?? 'Rich text field'}
         selectionActive={selectionActive}
         value={value}
+        onClose={() => setSelectionActive(false)}
         onApply={(next) => {
           lastLatexRef.current = next;
           editor?.commands.setContent(latexToTiptap(next), { emitUpdate: false, parseOptions: { preserveWhitespace: 'full' } });

@@ -38,7 +38,8 @@ export const createResumeFromPdf = async (file: File): Promise<ResumeRecord> => 
 
     const sub: FlexSubSection = {
       id: createId('sub'),
-      environment: 'cvitems',
+      environment: 'cvsubsection',
+      heading: 'Imported Content',
       items: entries,
     };
 

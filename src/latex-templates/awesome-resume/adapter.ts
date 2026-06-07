@@ -25,8 +25,7 @@ const sectionEnvs: SectionEnvDefinition[] = [
   { id: 'researchentries', label: 'Research Entries', allowedEntryTypeIds: ['researchentry'], allowsSubsectionHeading: true  },
   { id: 'cvhonors',        label: 'Honors & Awards', allowedEntryTypeIds: ['cvhonor'],       allowsSubsectionHeading: true  },
   { id: 'patents',         label: 'Patents',         allowedEntryTypeIds: ['cvpatent'],      allowsSubsectionHeading: false },
-  { id: 'cvskills',        label: 'Skills',          allowedEntryTypeIds: ['cvskill'],       allowsSubsectionHeading: true  },
-  { id: 'cvitems',         label: 'Bullet List',     allowedEntryTypeIds: ['item'],          allowsSubsectionHeading: true  },
+  { id: 'cvsubsection',    label: 'CV Subsection',   allowedEntryTypeIds: ['item'],          allowsSubsectionHeading: false },
   { id: 'publications',    label: 'Publications',    allowedEntryTypeIds: ['item'],          allowsSubsectionHeading: false },
 ];
 
@@ -81,18 +80,10 @@ const entryTypes: EntryTypeDefinition[] = [
     ],
   },
   {
-    id: 'cvskill',
-    label: 'Skill Group',
-    fields: [
-      { id: 'type',   label: 'Category' },
-      { id: 'skills', label: 'Skills' },
-    ],
-  },
-  {
     id: 'item',
-    label: 'Bullet Item',
+    label: 'Bullet Point',
     fields: [
-      { id: 'text', label: 'Text', multiline: true },
+      { id: 'text', label: 'Bullet text', multiline: true },
     ],
   },
 ];
@@ -221,7 +212,11 @@ const renderFlexSubSection = (sub: FlexSubSection): string => {
   const hasEntries = sub.items.some((item) => !('kind' in item) && !(item as FlexEntry).hidden);
   if (!hasEntries) return '';
 
-  const lines: string[] = [`\\begin{${sub.environment}}`];
+  const lines: string[] = [];
+  const heading = sub.heading?.trim();
+  if (heading) lines.push(`\\cvsubsection{${escapeLatex(heading)}}`);
+  const environment = sub.environment === 'cvsubsection' ? 'cvitems' : sub.environment;
+  lines.push(`\\begin{${environment}}`);
   for (const item of sub.items) {
     if ('kind' in item && (item as CvSubsectionHeading).kind === 'subsection-heading') {
       lines.push(`\\cvsubsection{${escapeLatex((item as CvSubsectionHeading).text)}}`);
@@ -233,7 +228,7 @@ const renderFlexSubSection = (sub: FlexSubSection): string => {
       }
     }
   }
-  lines.push(`\\end{${sub.environment}}`);
+  lines.push(`\\end{${environment}}`);
   return lines.join('\n');
 };
 

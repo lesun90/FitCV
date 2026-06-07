@@ -45,7 +45,7 @@ describe('PDF importer', () => {
     expect(summaryMarker?.needsReview).toBe(true);
   });
 
-  it('imports remaining lines as a flex section with cvitems entries', async () => {
+  it('imports remaining lines as a CV subsection with bullet point entries', async () => {
     extractPdfText.mockResolvedValue(
       'Ada Lovelace\nHeadline\nada@example.com\nSum 1\nSum 2\nSum 3\nSum 4\nBullet one\nBullet two'
     );
@@ -56,7 +56,8 @@ describe('PDF importer', () => {
     expect(resume.content.flexSections).toHaveLength(1);
     expect(resume.content.flexSections[0].name).toBe('IMPORTED CONTENT');
     const sub = resume.content.flexSections[0].items[0];
-    expect('environment' in sub && sub.environment).toBe('cvitems');
+    expect('environment' in sub && sub.environment).toBe('cvsubsection');
+    expect('environment' in sub && sub.heading).toBe('Imported Content');
   });
 
   it('throws when the PDF contains no extractable text', async () => {

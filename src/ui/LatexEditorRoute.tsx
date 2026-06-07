@@ -489,6 +489,7 @@ const LatexCodeEditor = ({
           fieldLabel="LaTeX source"
           selectionActive={selectionActive}
           value={contents}
+          onClose={() => setSelectionActive(false)}
           getValue={() => textareaRef.current?.value ?? contents}
           getSelection={() => ({
             start: textareaRef.current?.selectionStart ?? contents.length,

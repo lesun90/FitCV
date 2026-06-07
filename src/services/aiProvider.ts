@@ -36,8 +36,8 @@ export const PROVIDER_PRESETS: Record<AiProvider, ProviderPreset> = {
   gemini: {
     label: 'Gemini',
     endpointUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-    defaultModel: 'gemini-2.0-flash',
-    models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'],
+    defaultModel: 'gemini-2.5-flash-lite',
+    models: ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash', 'gemini-1.5-pro'],
     apiKeyUrl: 'https://aistudio.google.com/apikey',
     corsNote: 'Gemini may block direct browser requests. Use a local OpenAI-compatible proxy if you see CORS errors.',
   },
@@ -70,6 +70,12 @@ export type AiAssistSuggestion = {
   replacement: string;
   rationale?: string;
   warning?: string;
+};
+
+export type AiProviderConnectionCheck = {
+  checkedAt: string;
+  model: string;
+  providerLabel: string;
 };
 
 export type ReadinessReportRequest = {
@@ -329,11 +335,13 @@ const extractProviderErrorMessage = async (response: Response) => {
   }
 };
 
-const buildProviderError = async (response: Response) => {
-  if (response.status === 429) {
-    return 'AI request limit reached. Try again later or check your provider quota.';
-  }
+const buildProviderError = async (response: Response, includeRateLimitDetails = false) => {
   const providerMessage = await extractProviderErrorMessage(response);
+  if (response.status === 429) {
+    return includeRateLimitDetails && providerMessage
+      ? `AI request limit reached. ${providerMessage}`
+      : 'AI request limit reached. Try again later or check your provider quota.';
+  }
   return [
     `AI request failed with ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`,
     providerMessage || 'Check endpoint, model, API key, and browser CORS support.'
@@ -365,7 +373,12 @@ export const requestReadinessReport = async (
   return report;
 };
 
-const requestChatContent = async (settings: AiProviderSettings, messages: ChatMessage[], temperature: number) => {
+const requestChatContent = async (
+  settings: AiProviderSettings,
+  messages: ChatMessage[],
+  temperature: number,
+  options: { includeRateLimitDetails?: boolean } = {}
+) => {
   if (!isAiConfigured(settings)) throw new Error('AI settings are incomplete.');
   const apiKey = getApiKeyForRequest(settings);
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -381,7 +394,7 @@ const requestChatContent = async (settings: AiProviderSettings, messages: ChatMe
     })
   });
   if (!response.ok) {
-    throw new Error(await buildProviderError(response));
+    throw new Error(await buildProviderError(response, options.includeRateLimitDetails));
   }
   if (settings.provider === 'gemini') {
     const remaining = parseInt(response.headers.get('x-ratelimit-remaining-requests') ?? '', 10);
@@ -394,6 +407,24 @@ const requestChatContent = async (settings: AiProviderSettings, messages: ChatMe
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('AI provider returned no content.');
   return content;
+};
+
+export const requestProviderConnectionCheck = async (settings: AiProviderSettings): Promise<AiProviderConnectionCheck> => {
+  await requestChatContent(settings, [
+    {
+      role: 'system',
+      content: 'You are verifying a FitCV AI provider connection. Reply with the exact text: FitCV connection OK'
+    },
+    {
+      role: 'user',
+      content: 'Verify this connection.'
+    }
+  ], 0, { includeRateLimitDetails: true });
+  return {
+    checkedAt: new Date().toISOString(),
+    model: settings.model.trim(),
+    providerLabel: settings.provider ? PROVIDER_PRESETS[settings.provider].label : 'Custom provider'
+  };
 };
 
 export const requestFitToJdDraft = async (
@@ -473,7 +504,7 @@ export const buildImportFromCvMessages = (request: ImportFromCvRequest): ChatMes
         '     "Education" → environment labelled "CV Entries"',
         '     "Projects" → environment labelled "Projects"',
         '     "Skills" / "Technical Skills" → environment labelled "Skills"',
-        '     Any other section → use the "cvitems" environment if available, otherwise closest match',
+        '     Any other section → use the "cvsubsection" environment if available, otherwise closest match',
         '6. Use only the environment IDs and entry type IDs listed in the vocabulary below.',
         '7. Omit sections and fields absent from the source.',
         '8. Do not wrap the response in markdown fences.',

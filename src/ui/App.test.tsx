@@ -84,6 +84,21 @@ vi.mock('../services/aiProvider', async (importOriginal) => {
         message: 'Strong platform and accessibility keyword coverage.',
         impact: 0
       }]
+    })),
+    requestProviderConnectionCheck: vi.fn(async () => ({
+      checkedAt: '2026-06-05T12:00:00.000Z',
+      model: 'cv-model',
+      providerLabel: 'Custom provider'
+    })),
+    requestReadinessReport: vi.fn(async () => ({
+      readinessPercent: 72,
+      reasons: [{
+        id: 'summary-focus',
+        severity: 'medium',
+        field: 'content.summary',
+        message: 'Summary could state a clearer target role.',
+        impact: -8
+      }]
     }))
   };
 });
@@ -114,6 +129,34 @@ describe('FitCV UI shell', () => {
     expect(screen.getByRole('button', { name: 'Show compile logs' })).toBeInTheDocument();
   });
 
+  it('renders dashboard action rows as comfortable utility targets', async () => {
+    render(<App />);
+
+    const exportAction = await screen.findByRole('button', { name: 'Export backup' });
+    const restoreAction = screen.getByText('Restore backup').closest('.filter-action');
+
+    expect(screen.queryByRole('button', { name: 'Duplicate active' })).not.toBeInTheDocument();
+
+    for (const action of [exportAction, restoreAction]) {
+      expect(action).toBeTruthy();
+      expect(action).toHaveClass('filter-action');
+    }
+
+    const stylesCss = readFileSync(join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+    const filterActionRules = [...stylesCss.matchAll(/\.filter-action\s*\{(?<body>[^}]*)\}/gm)];
+    const filterActionRule = filterActionRules
+      .map((match) => match.groups?.body ?? '')
+      .find((body) => body.includes('font-weight: 600;')) ?? '';
+    const filterActionIconRule = stylesCss.match(/^\.filter-action svg\s*\{(?<body>[^}]*)\}/m)?.groups?.body ?? '';
+
+    expect(stylesCss).toMatch(/--utility-text:\s*#334155;/);
+    expect(filterActionRule).toContain('min-height: 44px;');
+    expect(filterActionRule).toContain('font-weight: 600;');
+    expect(filterActionRule).toContain('color: var(--utility-text);');
+    expect(filterActionIconRule).toContain('height: 18px;');
+    expect(filterActionIconRule).toContain('width: 18px;');
+  });
+
   it('shows separate readiness lanes without a combined score or JD match before a JD exists', async () => {
     render(<App />);
 
@@ -137,6 +180,36 @@ describe('FitCV UI shell', () => {
     fireEvent.click(screen.getByRole('button', { name: /ATS Readiness/ }));
     expect(await screen.findByRole('button', { name: 'Run ATS Check' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Run JD Match' })).not.toBeInTheDocument();
+  });
+
+  it('groups readiness findings by severity and supports keyboard field navigation', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: '' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /ATS Readiness/ }));
+
+    expect(await screen.findByText('High · 1')).toBeInTheDocument();
+    expect(screen.getByText(/Medium · \d+/)).toBeInTheDocument();
+
+    const missingNameIssue = screen.getByRole('button', { name: /Name is required for every template/i });
+    fireEvent.keyDown(missingNameIssue, { key: ' ' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'ATS Readiness details' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('textbox', { name: 'Name' })).toHaveFocus());
+  });
+
+  it('discloses local and AI provider readiness run behavior before checks run', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /CV Quality/ }));
+    expect(await screen.findByText(/sends resume text to your configured AI provider/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: /ATS/ }));
+    expect(await screen.findByText(/runs locally and does not send resume content to AI/i)).toBeInTheDocument();
   });
 
   it('shows Awesome CV as a FitCV layout with module controls in the editor', async () => {
@@ -252,6 +325,11 @@ describe('FitCV UI shell', () => {
     expect(screen.getByRole('dialog', { name: 'AI settings' })).toBeInTheDocument();
     expect(screen.getByLabelText('Endpoint URL')).toHaveValue('');
     expect(screen.getByLabelText('Remember API key on this device')).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close AI assist' }));
+
+    expect(screen.queryByText('AI setup required')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'AI assist Name' })).not.toBeInTheDocument();
   });
 
   it('reviews AI suggestions before applying them to a selected editor field', async () => {
@@ -262,7 +340,11 @@ describe('FitCV UI shell', () => {
     fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://ai.example.test/v1/chat/completions' } });
     fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'cv-model' } });
     fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'session-secret' } });
+    expect(screen.getByLabelText('API key')).toHaveAttribute('type', 'text');
+    expect(screen.getByLabelText('API key')).toHaveValue('session-secret');
     fireEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+    expect(screen.getByRole('dialog', { name: 'AI settings' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     fireEvent.click(await screen.findByRole('button', { name: 'Summary' }));
     const nameInput = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement;
@@ -279,6 +361,38 @@ describe('FitCV UI shell', () => {
     expect(screen.getByRole('textbox', { name: 'Name' })).toHaveValue('Led Q4 launch for 12 vehicles.');
   });
 
+  it('offers current Gemini 2.5 models in AI settings', async () => {
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'AI settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Gemini' }));
+
+    expect(screen.getByRole('combobox', { name: 'Model' })).toHaveValue('gemini-2.5-flash-lite');
+    expect(screen.getByRole('option', { name: 'gemini-2.5-flash-lite' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'gemini-2.5-flash' })).toBeInTheDocument();
+  });
+
+  it('shows provider feedback when the AI settings connection check fails', async () => {
+    const { requestProviderConnectionCheck } = await import('../services/aiProvider');
+    const providerResponse = 'AI request limit reached. [{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to https://ai.google.dev/gemini-api/docs/rate-limits.","status":"RESOURCE_EXHAUSTED","details":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_free_tier_requests","quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","model":"gemini-2.0-flash"}]}}]';
+    vi.mocked(requestProviderConnectionCheck).mockRejectedValueOnce(new Error(providerResponse));
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'AI settings' }));
+    fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://ai.example.test/v1/chat/completions' } });
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'cv-model' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+
+    expect(await screen.findByText('Needs attention')).toBeInTheDocument();
+    expect(screen.getByText('AI request limit reached. Check your provider quota or billing details.')).toBeInTheDocument();
+    expect(screen.queryByText(providerResponse)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Show server response'));
+    expect(screen.getByText(providerResponse)).toBeInTheDocument();
+  });
+
   it('creates a fitted CV from a JD and blocks export until AI changes are reviewed', async () => {
     render(<App />);
 
@@ -287,8 +401,10 @@ describe('FitCV UI shell', () => {
     fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://ai.example.test/v1/chat/completions' } });
     fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'cv-model' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'AI settings' })).not.toBeInTheDocument());
+    expect(screen.getByRole('dialog', { name: 'AI settings' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Fit to JD' })).not.toBeDisabled());
     fireEvent.click(screen.getByRole('button', { name: 'Fit to JD' }));
     expect(await screen.findByRole('dialog', { name: 'Fit to job description' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Fitted CV title'), { target: { value: 'Ada - Frontend Platform' } });
@@ -305,7 +421,7 @@ describe('FitCV UI shell', () => {
 
     await waitFor(() => expect(screen.queryByText(/1 unreviewed change/)).not.toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Export' })).not.toBeDisabled();
-    expect(screen.getByRole('button', { name: 'JD Match: 88%' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'JD Match: 88%' })).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Dashboard' }));
     expect(await screen.findByText('Ada - Frontend Platform')).toBeInTheDocument();
@@ -512,7 +628,11 @@ describe('FitCV UI shell', () => {
     fireEvent.change(screen.getByLabelText('Endpoint URL'), { target: { value: 'https://ai.example.test/v1/chat/completions' } });
     fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'cv-model' } });
     fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'session-secret' } });
+    expect(screen.getByLabelText('API key')).toHaveAttribute('type', 'text');
+    expect(screen.getByLabelText('API key')).toHaveValue('session-secret');
     fireEvent.click(screen.getByRole('button', { name: 'Save AI settings' }));
+    expect(screen.getByRole('dialog', { name: 'AI settings' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     const editor = await screen.findByRole('textbox', { name: 'Editing resume.tex' }) as HTMLTextAreaElement;
     fireEvent.change(editor, { target: { value: '\\item Led Q4 launch for 12 vehicles across multiple teams.' } });

@@ -7,8 +7,10 @@ import {
   isAiConfigured,
   PROVIDER_PRESETS,
   requestAiSuggestion,
+  requestProviderConnectionCheck,
   setSessionApiKey,
   type AiAssistAction,
+  type AiProviderConnectionCheck,
   type AiAssistSuggestion,
   type AiProvider,
   type AiProviderSettings,
@@ -98,6 +100,7 @@ export const AiAssistButton = ({
   fieldLabel,
   getSelection,
   getValue,
+  onClose,
   onApply,
   selectionActive = true,
   surroundingText,
@@ -108,6 +111,7 @@ export const AiAssistButton = ({
   fieldLabel: string;
   getSelection?: () => TextSelection;
   getValue?: () => string;
+  onClose?: () => void;
   onApply: (value: string, selection?: TextSelection) => void;
   selectionActive?: boolean;
   surroundingText?: string;
@@ -125,6 +129,14 @@ export const AiAssistButton = ({
   const [suggestion, setSuggestion] = useState<AiAssistSuggestion>();
   const [error, setError] = useState('');
 
+  const closeAssist = () => {
+    setOpen(false);
+    setSelection(undefined);
+    setSuggestion(undefined);
+    setError('');
+    onClose?.();
+  };
+
   useEffect(() => {
     if (!open || !anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
@@ -135,7 +147,7 @@ export const AiAssistButton = ({
     if (!open) return;
     const handleOutside = (e: MouseEvent) => {
       if (anchorRef.current && !anchorRef.current.contains(e.target as Node)) {
-        setOpen(false);
+        closeAssist();
       }
     };
     document.addEventListener('mousedown', handleOutside);
@@ -196,7 +208,7 @@ export const AiAssistButton = ({
     } else {
       onApply(currentValue.slice(0, current.start) + suggestion.replacement + currentValue.slice(current.end), current);
     }
-    setOpen(false);
+    closeAssist();
   };
 
   if (!selectionActive && !open) return null;
@@ -212,13 +224,13 @@ export const AiAssistButton = ({
         type="button"
         disabled={disabled}
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => open ? closeAssist() : setOpen(true)}
         aria-label={`AI assist ${fieldLabel}`}
         title={`AI assist ${fieldLabel}`}
       ><Bot /></button>
       {open && (
         <div className={`ai-popover${popoverAbove ? ' ai-popover--above' : ''}`} role="dialog" aria-label={`AI assist for ${fieldLabel}`}>
-          <button className="ai-close" type="button" onClick={() => setOpen(false)} aria-label="Close AI assist"><X /></button>
+          <button className="ai-close" type="button" onClick={closeAssist} aria-label="Close AI assist"><X /></button>
           {stage === 'setup' && (
             <div className="ai-popover-section">
               <strong>AI setup required</strong>
@@ -324,7 +336,7 @@ export const AiAssistButton = ({
               <div className="ai-review-actions">
                 <button className="ai-primary" type="button" aria-label="Accept suggestion" onClick={accept}>Accept suggestion</button>
                 <button type="button" onClick={() => setStage('menu')}>New suggestion</button>
-                <button type="button" onClick={() => setOpen(false)}>Dismiss</button>
+                <button type="button" onClick={closeAssist}>Dismiss</button>
               </div>
             </div>
           )}
@@ -335,6 +347,34 @@ export const AiAssistButton = ({
 };
 
 const PROVIDER_ORDER: AiProvider[] = ['openai', 'deepseek', 'gemini', 'claude', 'local'];
+
+type ConnectionStatus =
+  | { state: 'idle' }
+  | { state: 'checking' }
+  | { state: 'connected'; result: AiProviderConnectionCheck }
+  | { state: 'error'; message: string };
+
+type ConnectionErrorFeedback = {
+  summary: string;
+  details?: string;
+};
+
+const firstMeaningfulErrorLine = (message: string) => {
+  const normalized = message
+    .replace(/\\n/g, '\n')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const resourceMatch = normalized.match(/^(AI request limit reached\.)/i);
+  if (resourceMatch) return `${resourceMatch[1]} Check your provider quota or billing details.`;
+  const sentenceMatch = normalized.match(/^(.{20,220}?[.!?])(?:\s|$)/);
+  return sentenceMatch?.[1] ?? normalized.slice(0, 180);
+};
+
+const connectionErrorFeedback = (message: string): ConnectionErrorFeedback => {
+  const trimmed = message.trim();
+  const summary = firstMeaningfulErrorLine(trimmed);
+  return trimmed.length > summary.length + 20 ? { summary, details: trimmed } : { summary };
+};
 
 const QuotaBar = ({ quota }: { quota: GeminiQuotaSnapshot }) => {
   const pct = Math.max(0, Math.min(100, Math.round((quota.remaining / quota.limit) * 100)));
@@ -367,17 +407,21 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
   const [settings, setSettings] = useState<AiProviderSettings>(blankSettings);
   const [apiKey, setApiKey] = useState('');
   const [geminiQuota, setGeminiQuota] = useState<GeminiQuotaSnapshot | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>({ state: 'idle' });
+  const [showConnectionDetails, setShowConnectionDetails] = useState(false);
 
   useEffect(() => {
     void loadSettings().then((loadedSettings) => {
       setSettings(loadedSettings);
-      setApiKey('');
+      setApiKey(loadedSettings.apiKey ?? '');
     });
     setGeminiQuota(storage.getGeminiQuota());
   }, []);
 
   const selectProvider = (p: AiProvider) => {
     const preset = PROVIDER_PRESETS[p];
+    setConnectionStatus({ state: 'idle' });
+    setShowConnectionDetails(false);
     setSettings((cur) => ({
       ...cur,
       provider: p,
@@ -386,13 +430,18 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
     }));
   };
 
+  const updateSettings = (next: AiProviderSettings) => {
+    setConnectionStatus({ state: 'idle' });
+    setShowConnectionDetails(false);
+    setSettings(next);
+  };
+
   const save = async () => {
     const saved = sanitizeSettings(settings, apiKey || settings.apiKey || '');
     if (!saved.rememberApiKey) setSessionApiKey(apiKey || getSessionApiKey());
     cachedSettings = saved;
     await storage.saveProviderSettings(saved);
     onSaved?.(saved);
-    onClose();
   };
 
   const forgetKey = async () => {
@@ -406,9 +455,31 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
     setApiKey('');
   };
 
+  const checkConnection = async () => {
+    const draft = sanitizeSettings(settings, '');
+    const keyForCheck = apiKey || settings.apiKey || '';
+    const checkSettings = keyForCheck ? { ...draft, apiKey: keyForCheck } : draft;
+    try {
+      setConnectionStatus({ state: 'checking' });
+      setShowConnectionDetails(false);
+      const result = await requestProviderConnectionCheck(checkSettings);
+      setConnectionStatus({ state: 'connected', result });
+      setGeminiQuota(storage.getGeminiQuota());
+    } catch (caught) {
+      setConnectionStatus({
+        state: 'error',
+        message: caught instanceof Error ? caught.message : 'Connection check failed.'
+      });
+      setShowConnectionDetails(false);
+    }
+  };
+
   const activePreset = settings.provider ? PROVIDER_PRESETS[settings.provider] : undefined;
   const activeModels = activePreset?.models ?? [];
   const modelIsPreset = activeModels.includes(settings.model);
+  const errorFeedback = connectionStatus.state === 'error'
+    ? connectionErrorFeedback(connectionStatus.message)
+    : undefined;
 
   return (
     <div className={compact ? 'ai-settings compact' : 'ai-settings'} role="dialog" aria-label="AI settings">
@@ -439,7 +510,7 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
       <label>
         <span>Endpoint URL</span>
         <input aria-label="Endpoint URL" value={settings.endpointUrl} placeholder="https://your-provider.example/v1/chat/completions"
-          onChange={(e) => setSettings({ ...settings, endpointUrl: e.target.value })} />
+          onChange={(e) => updateSettings({ ...settings, endpointUrl: e.target.value })} />
       </label>
       <label>
         <span>Model</span>
@@ -450,9 +521,9 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
               value={modelIsPreset ? settings.model : '__custom__'}
               onChange={(e) => {
                 if (e.target.value === '__custom__') {
-                  setSettings({ ...settings, model: '' });
+                  updateSettings({ ...settings, model: '' });
                 } else {
-                  setSettings({ ...settings, model: e.target.value });
+                  updateSettings({ ...settings, model: e.target.value });
                 }
               }}
             >
@@ -464,29 +535,69 @@ const AiSettingsDialog = ({ compact = false, onClose, onSaved }: {
                 aria-label="Custom model name"
                 value={settings.model}
                 placeholder="e.g. gemini-2.5-flash-preview-05-20"
-                onChange={(e) => setSettings({ ...settings, model: e.target.value })}
+                onChange={(e) => updateSettings({ ...settings, model: e.target.value })}
               />
             )}
           </>
         ) : (
           <input aria-label="Model" value={settings.model} placeholder={activePreset?.defaultModel ?? 'your-model-name'}
-            onChange={(e) => setSettings({ ...settings, model: e.target.value })} />
+            onChange={(e) => updateSettings({ ...settings, model: e.target.value })} />
         )}
       </label>
       <label>
         <span>API key{activePreset?.apiKeyUrl && (
           <> — <a className="ai-apikey-link" href={activePreset.apiKeyUrl} target="_blank" rel="noopener noreferrer">Get key ↗</a></>
         )}</span>
-        <input aria-label="API key" type="password" value={apiKey} placeholder={settings.apiKey ? 'Saved key is remembered' : settings.provider === 'local' ? 'Not required for local endpoints' : 'Paste your API key'}
-          onChange={(e) => setApiKey(e.target.value)} />
+        <input aria-label="API key" type="text" value={apiKey} placeholder={settings.apiKey ? 'Saved key is remembered' : settings.provider === 'local' ? 'Not required for local endpoints' : 'Paste your API key'}
+          onChange={(e) => { setConnectionStatus({ state: 'idle' }); setShowConnectionDetails(false); setApiKey(e.target.value); }} />
       </label>
       <label className="ai-checkbox">
         <input aria-label="Remember API key on this device" type="checkbox" checked={settings.rememberApiKey}
-          onChange={(e) => setSettings({ ...settings, rememberApiKey: e.target.checked })} />
+          onChange={(e) => updateSettings({ ...settings, rememberApiKey: e.target.checked })} />
         <span>Remember API key on this device</span>
       </label>
       <p className="ai-helper">Stored only in this browser when checked. Never exported in FitCV backups.</p>
+      <div className={`ai-connection-check ${connectionStatus.state}`} aria-live="polite">
+        <div className="ai-connection-icon" aria-hidden="true">
+          {connectionStatus.state === 'checking' ? <Loader2 className="ai-spin" /> : connectionStatus.state === 'error' ? <AlertCircle /> : <CheckCircle2 />}
+        </div>
+        <div className="ai-connection-copy">
+          <strong>
+            {connectionStatus.state === 'connected' ? 'Connected'
+              : connectionStatus.state === 'error' ? 'Needs attention'
+              : connectionStatus.state === 'checking' ? 'Checking connection'
+              : isAiConfigured(settings) ? 'Ready to test' : 'Setup incomplete'}
+          </strong>
+          <p>
+            {connectionStatus.state === 'connected'
+              ? `${connectionStatus.result.providerLabel} answered through ${connectionStatus.result.model}. Checked ${new Date(connectionStatus.result.checkedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+              : connectionStatus.state === 'error'
+                ? errorFeedback?.summary
+                : connectionStatus.state === 'checking'
+                  ? 'Sending a tiny verification request to your configured provider.'
+                  : isAiConfigured(settings)
+                    ? 'Run a quick flight check before relying on AI suggestions.'
+                    : 'Add an endpoint URL and model before testing.'}
+          </p>
+          {errorFeedback?.details && !showConnectionDetails && (
+            <button className="ai-connection-details-toggle" type="button" onClick={() => setShowConnectionDetails(true)}>
+              Show server response
+            </button>
+          )}
+          {errorFeedback?.details && showConnectionDetails && (
+            <div className="ai-connection-details">
+              <button className="ai-connection-details-toggle" type="button" onClick={() => setShowConnectionDetails(false)}>
+                Hide server response
+              </button>
+              <code>{errorFeedback.details}</code>
+            </div>
+          )}
+        </div>
+      </div>
       <div className="ai-settings-actions">
+        <button type="button" onClick={() => void checkConnection()} disabled={!isAiConfigured(settings) || connectionStatus.state === 'checking'}>
+          {connectionStatus.state === 'checking' ? 'Testing…' : 'Test connection'}
+        </button>
         <button className="ai-primary" type="button" aria-label="Save AI settings" onClick={() => void save()}>Save</button>
         {settings.apiKey && <button type="button" onClick={() => void forgetKey()}>Forget key</button>}
         <button type="button" onClick={onClose}>Cancel</button>

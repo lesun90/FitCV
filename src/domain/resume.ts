@@ -60,21 +60,22 @@ const cvHonor = (fields: FlexEntry['fields']): FlexEntry => ({
   fields,
 });
 
-const cvSkill = (fields: FlexEntry['fields']): FlexEntry => ({
-  id: id('entry'),
-  type: 'cvskill',
-  fields,
-});
-
 const projectEntry = (fields: FlexEntry['fields']): FlexEntry => ({
   id: id('entry'),
   type: 'projectentry',
   fields,
 });
 
-const subSection = (environment: string, items: FlexEntry[]): FlexSubSection => ({
+const itemEntry = (text: string): FlexEntry => ({
+  id: id('entry'),
+  type: 'item',
+  fields: { text },
+});
+
+const subSection = (environment: string, items: FlexSubSection['items'], heading?: string): FlexSubSection => ({
   id: id('sub'),
   environment,
+  ...(heading ? { heading } : {}),
   items,
 });
 
@@ -135,9 +136,9 @@ export const sampleResume = (): ResumeRecord => {
   ]);
 
   const skillsSection = flexSection('SKILLS', [
-    subSection('cvskills', [
-      cvSkill({ type: 'Core skills', skills: 'Systems thinking, Technical writing, Mathematics, Algorithm design' }),
-    ]),
+    subSection('cvsubsection', [
+      itemEntry('Systems thinking, technical writing, mathematics, and algorithm design.'),
+    ], 'Core Skills'),
   ]);
 
   const awardsSection = flexSection('HONORS & AWARDS', [
@@ -198,10 +199,24 @@ export const starterResume = (templateId: TemplateId = 'awesome-cv'): ResumeReco
   ]);
 
   const skillsSection = flexSection('SKILLS AND EXPERIENCE', [
-    subSection('cvskills', [
-      cvSkill({ type: 'Languages', skills: 'Language A, Language B' }),
-      cvSkill({ type: 'Tools',     skills: 'Tool A, Tool B, Framework A, Framework B, Framework C' }),
-    ]),
+    subSection('cvsubsection', [
+      itemEntry('Fluent in Language A, Language B.'),
+      itemEntry('Proficient in version control and collaborative development workflows.'),
+    ], 'Programming Languages'),
+    subSection('cvsubsection', [
+      itemEntry('Lorem ipsum dolor sit amet, consectetur adipiscing elit.'),
+      itemEntry('Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.'),
+      itemEntry('Duis aute irure dolor in reprehenderit in voluptate velit esse.'),
+    ], 'Domain Software Experience'),
+    subSection('cvsubsection', [
+      itemEntry('Experience with hardware platform type A.'),
+      itemEntry('Experience with hardware platform type B, including sensors, actuators, and control systems.'),
+    ], 'Hardware Platform Experience'),
+    subSection('cvsubsection', [
+      itemEntry('Platform: Tool A, Tool B'),
+      itemEntry('Simulator: Tool C, Tool D'),
+      itemEntry('Libraries and frameworks: Framework A, Framework B, Framework C.'),
+    ], 'Tools and Frameworks'),
   ]);
 
   resume.content.flexSections = [expSection, eduSection, skillsSection];

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createResume, sampleResume } from './resume';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { createResume, sampleResume, starterResume } from './resume';
 import { getTemplateAdapter, renderAdapterLatexProject } from './templateAdapters';
 import { getTemplate } from './templates';
 import type { FlexEntry, FlexSection, FlexSubSection } from './types';
@@ -183,13 +185,44 @@ describe('template adapters', () => {
     expect(template.entryTypes?.length).toBeGreaterThan(0);
     expect(template.entryTypes?.find((et) => et.id === 'cventry')?.fields.map((f) => f.id)).toEqual(['position', 'title', 'location', 'date', 'highlights']);
     expect(template.sectionEnvs?.find((e) => e.id === 'experience')?.allowedEntryTypeIds).toContain('cventry');
+    expect(template.sectionEnvs?.find((e) => e.id === 'cvsubsection')?.allowedEntryTypeIds).toContain('item');
+    expect(template.sectionEnvs?.find((e) => e.id === 'cvsubsection')?.label).toBe('CV Subsection');
+    expect(template.sectionEnvs?.find((e) => e.id === 'cvitems')).toBeUndefined();
+    expect(template.entryTypes?.find((et) => et.id === 'cvskill')).toBeUndefined();
+  });
+
+  it('bundled Awesome CV skills template matches the adapter skills contract', () => {
+    const skillsTemplate = readFileSync(
+      resolve(process.cwd(), 'src/latex-templates/awesome-resume/resume/skills.tex'),
+      'utf8'
+    );
+
+    expect(skillsTemplate).toContain('\\cvsubsection{Programming Languages}');
+    expect(skillsTemplate).toContain('\\begin{cvitems}');
+    expect(skillsTemplate).toContain('\\item {');
+    expect(skillsTemplate).toContain('\\end{cvitems}');
+    expect(skillsTemplate).not.toContain('\\begin{cvskills}');
+  });
+
+  it('renders bullet-list sub-section headings before cvitems blocks', async () => {
+    const resume = starterResume();
+
+    const result = await renderAdapterLatexProject(resume);
+
+    expect(result.latexSource).toContain([
+      '\\cvsubsection{Hardware Platform Experience}',
+      '\\begin{cvitems}',
+      '  \\item {Experience with hardware platform type A.}',
+      '  \\item {Experience with hardware platform type B, including sensors, actuators, and control systems.}',
+      '\\end{cvitems}',
+    ].join('\n'));
   });
 
   it('hidden flex sections and entries are excluded from output', async () => {
     const resume = createResume('Hidden Test', 'awesome-cv');
     resume.content.profile = { fullName: 'Test', email: '', phone: '', location: '', links: [], headline: '' };
-    const visibleSection = makeSection('VISIBLE', [makeSub('cvitems', [makeEntry('item', { text: 'Should appear' })])]);
-    const hiddenSection = makeSection('HIDDEN', [makeSub('cvitems', [makeEntry('item', { text: 'Should not appear' })])]);
+    const visibleSection = makeSection('VISIBLE', [makeSub('cvsubsection', [makeEntry('item', { text: 'Should appear' })])]);
+    const hiddenSection = makeSection('HIDDEN', [makeSub('cvsubsection', [makeEntry('item', { text: 'Should not appear' })])]);
     hiddenSection.hidden = true;
     resume.content.flexSections = [visibleSection, hiddenSection];
     resume.templateLayouts['awesome-cv'] = [
