@@ -166,7 +166,7 @@ export const buildAiAssistMessages = (request: AiAssistRequest): ChatMessage[] =
   }
 ];
 
-export const buildReadinessMessages = (request: ReadinessReportRequest): ChatMessage[] => [
+const buildReadinessMessages = (request: ReadinessReportRequest): ChatMessage[] => [
   {
     role: 'system',
     content: [
@@ -348,7 +348,7 @@ const buildProviderError = async (response: Response, includeRateLimitDetails = 
   ].join('. ');
 };
 
-export const getApiKeyForRequest = (settings: AiProviderSettings) => settings.apiKey || sessionApiKey;
+const getApiKeyForRequest = (settings: AiProviderSettings) => settings.apiKey || sessionApiKey;
 
 export const isAiConfigured = (settings?: AiProviderSettings) =>
   Boolean(settings?.endpointUrl.trim() && settings.model.trim());

@@ -145,9 +145,6 @@ export const App = () => {
   const sourceResume = activeFittedCv ? resumes.find((resume) => resume.id === activeFittedCv.sourceResumeId) : undefined;
   const editorTargetType = activeFittedCv ? 'fitted-cv' as const : 'resume' as const;
   const editorTargetId = activeFittedCv?.id ?? active?.id;
-  const activeJobDescription = activeFittedCv?.jobDescriptionId
-    ? jobDescriptions.find((jobDescription) => jobDescription.id === activeFittedCv.jobDescriptionId)
-    : undefined;
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
   const compileGenRef = useRef(0);
