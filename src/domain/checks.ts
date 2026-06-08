@@ -18,18 +18,39 @@ type AtsReadinessOptions = {
 type AtsReason = ScoringReportRecord['reasons'][number];
 
 const STANDARD_SECTION_PATTERNS: Record<string, RegExp[]> = {
-  experience: [/\b(work|professional|relevant)?\s*experience\b/i, /\bemployment\b/i],
-  skills: [/\b(skills|technical skills|core skills|technologies)\b/i],
-  education: [/\beducation\b/i],
+  experience: [/\b(work|professional|relevant)?\s*experience\b/i, /\bemployment(\s*history)?\b/i],
+  education: [/\beducation\b/i, /\bacademic (background|history)\b/i],
+  skills: [/\b(technical|core|key)?\s*skills?\b/i, /\bcompetencies\b/i, /\btechnologies\b/i],
+  summary: [/\b(professional|career)?\s*summary\b/i, /\bprofile\b/i, /\bobjective\b/i],
   projects: [/\bprojects?\b/i],
-  research: [/\bresearch\b/i],
+  certifications: [/\b(certifications?|licenses?)\b/i],
+  awards: [/\b(awards?|honou?rs?)\b/i],
+  volunteer: [/\bvolunteer(ing|\s*(experience|work))?\b/i, /\bcommunity\s*(service|involvement)\b/i],
   publications: [/\bpublications?\b/i],
+  research: [/\bresearch\b/i],
+  languages: [/\blanguages?\b/i],
 };
 
-const NONSTANDARD_SECTION_PATTERN = /\b(my journey|career story|the toolkit|where i've been|about me|what i do)\b/i;
-const PLACEHOLDER_PATTERN = /\b(lorem ipsum|your email|yourusername|company name|senior job title|mid-level job title|junior job title|month year|tool a|language a|first last)\b/i;
+const STANDARD_SECTION_LABELS = ['Experience', 'Skills', 'Education', 'Projects', 'Awards', 'Certifications', 'Volunteer Experience', 'Publications', 'Summary', 'Languages'];
+
+const SECTION_RENAME_HINTS: { pattern: RegExp; looksLike: string; labels: string[] }[] = [
+  { pattern: /\b(my journey|career story|where i'?ve been|career path)\b/i, looksLike: 'Experience', labels: ['Experience', 'Work Experience'] },
+  { pattern: /\b(toolkit|tool ?box|tech stack|arsenal|what i (?:bring|use))\b/i, looksLike: 'Skills', labels: ['Skills', 'Technical Skills'] },
+  { pattern: /\b(about me|who i am|\bbio\b|my story)\b/i, looksLike: 'Summary', labels: ['Professional Summary'] },
+  { pattern: /\b(kudos|accolades|\bwins\b|proof of work|recognition)\b/i, looksLike: 'Awards', labels: ['Awards', 'Honors & Awards'] },
+  { pattern: /\b(badges|credentials)\b/i, looksLike: 'Certifications', labels: ['Certifications'] },
+  { pattern: /\b(community|giving back)\b/i, looksLike: 'Volunteer', labels: ['Volunteer Experience'] },
+];
+
 const CLEAR_DATE_PATTERN = /(\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{4}\b|\b\d{1,2}\/\d{4}\b|\b\d{4}\b|\bpresent\b)/i;
 const UNCLEAR_DATE_PATTERN = /['’]\d{2}\b|\bsummer\b|\bspring\b|\bfall\b|\bwinter\b/i;
+
+const DATE_STYLE_BUCKETS: { id: string; pattern: RegExp }[] = [
+  { id: 'slash-numeric', pattern: /\b\d{1,2}\/\d{4}\b/ },
+  { id: 'dash-numeric', pattern: /\b\d{1,2}-\d{4}\b/ },
+  { id: 'textual-month', pattern: /\b[a-z]{3,9}\.?\s+\d{4}\b/i },
+  { id: 'bare-year', pattern: /\b\d{4}\b/ },
+];
 
 export const buildAtsReadinessReport = (
   resume: ResumeRecord,
@@ -39,68 +60,155 @@ export const buildAtsReadinessReport = (
   const profile = resume.content.profile;
   const sectionNames = resume.content.flexSections.map((section) => section.name);
   const visibleSections = resume.content.flexSections.filter((section) => !section.hidden);
-  const flattenedText = flattenResumeText(resume);
   const experienceSections = visibleSections.filter((section) => matchesSection(section.name, 'experience'));
   const skillSections = visibleSections.filter((section) => matchesSection(section.name, 'skills'));
 
   if (!profile.fullName.trim()) {
-    reasons.push(reason('missing-name', 'high', 'Name is required for every template.', -30, 'content.profile.fullName'));
+    reasons.push(reason(
+      'missing-name', 'high',
+      'Your name is missing. ATS parsers extract the applicant name from the top of the contact block to file and identify the application.',
+      -30, 'content.profile.fullName',
+      'Add your full name to the profile.'
+    ));
   }
   if (!profile.email.trim()) {
-    reasons.push(reason('missing-email', 'medium', 'Email is missing from the contact block.', -15, 'content.profile.email'));
+    reasons.push(reason(
+      'missing-email', 'medium',
+      'Your email address is missing. Parsers extract email via pattern matching from the contact block, and recruiters rely on it to follow up.',
+      -15, 'content.profile.email',
+      'Add a valid email address to your profile.'
+    ));
   }
   if (!profile.phone.trim() && !profile.location.trim()) {
-    reasons.push(reason('missing-phone-or-location', 'medium', 'No phone number or location is available for parser contact extraction.', -6, 'content.profile'));
+    reasons.push(reason(
+      'missing-phone-or-location', 'medium',
+      'Neither a phone number nor a location is set. Parsers look for at least one of these alongside your email to build a complete contact record.',
+      -6, 'content.profile',
+      'Add a phone number or a city/region to your profile.'
+    ));
   }
-  if (resume.content.summary.length > 700) {
-    reasons.push(reason('long-summary', 'medium', 'Summary is unusually long for ATS scanning.', -10, 'content.summary'));
+  const unclearLink = profile.links.find((link) => !/^https?:\/\//i.test(link) && !/^[\w.-]+\.[a-z]{2,}/i.test(link));
+  if (unclearLink) {
+    reasons.push(reason(
+      'unclear-link', 'medium',
+      `The link "${unclearLink}" doesn't look like a standard URL or domain. Parsers extract links via pattern matching and may render this as plain, unclickable text.`,
+      -8, 'content.profile.links',
+      'Use a full URL (e.g. https://linkedin.com/in/yourname) or a bare domain (yourname.dev).'
+    ));
   }
-  if (profile.links.some((link) => !/^https?:\/\//i.test(link) && !/^[\w.-]+\.[a-z]{2,}/i.test(link))) {
-    reasons.push(reason('unclear-link', 'medium', 'One or more links may not be readable when exported.', -8, 'content.profile.links'));
-  }
-  if (resume.content.profile.hiddenFields?.some((field) => ['email', 'phone', 'location', 'links'].includes(field))) {
-    reasons.push(reason('hidden-contact-field', 'medium', 'One or more contact fields are hidden from the rendered resume.', -8, 'content.profile.hiddenFields'));
+  const hiddenContactField = resume.content.profile.hiddenFields?.find((field) => ['email', 'phone', 'location', 'links'].includes(field));
+  if (hiddenContactField) {
+    reasons.push(reason(
+      'hidden-contact-field', 'medium',
+      `Your ${hiddenContactField} is hidden from the rendered resume. Parsers can only read what's in the exported document — a hidden field is invisible to them.`,
+      -8, 'content.profile.hiddenFields',
+      "Unhide this field, or remove it if you don't want it included."
+    ));
   }
 
   if (!experienceSections.length) {
-    reasons.push(reason('missing-experience-section', 'high', 'ATS parsers rely on a standard Experience section anchor.', -18, 'content.flexSections'));
+    reasons.push(reason(
+      'missing-experience-section', 'high',
+      'No section is titled "Experience," "Work Experience," or similar. Parsers locate your job history by matching this label, then extract titles, companies, and dates from underneath it.',
+      -18, 'content.flexSections',
+      'Add or rename a section to "Experience" or "Work Experience".'
+    ));
   }
   if (!skillSections.length) {
-    reasons.push(reason('missing-skills-section', 'medium', 'A standard Skills section helps parsers extract searchable keywords.', -12, 'content.flexSections'));
+    reasons.push(reason(
+      'missing-skills-section', 'medium',
+      'No section is titled "Skills" or similar. Parsers use this label to locate the keyword list they match against job requirements.',
+      -12, 'content.flexSections',
+      'Add or rename a section to "Skills" or "Technical Skills".'
+    ));
   }
-  if (!hasAnySection(sectionNames, ['education', 'projects', 'research', 'publications'])) {
-    reasons.push(reason('missing-supporting-section', 'medium', 'No Education, Projects, Research, or Publications section is available as a standard parser anchor.', -8, 'content.flexSections'));
+  if (!hasAnySection(sectionNames, ['education', 'projects', 'certifications', 'awards', 'volunteer', 'research', 'publications'])) {
+    reasons.push(reason(
+      'missing-supporting-section', 'medium',
+      'No Education, Projects, Certifications, Awards, Volunteer, Research, or Publications section is present. These give parsers extra anchors to file additional context under.',
+      -8, 'content.flexSections',
+      'Add at least one supporting section using a standard label, e.g. "Education".'
+    ));
   }
 
   for (const section of visibleSections) {
-    if (NONSTANDARD_SECTION_PATTERN.test(section.name) || !matchesAnyStandardSection(section.name)) {
-      reasons.push(reason('nonstandard-section-heading', 'medium', `Section heading "${section.name}" is not a standard ATS anchor.`, -6, `content.flexSections.${section.id}.name`));
+    if (!matchesAnyStandardSection(section.name)) {
+      reasons.push(reason(
+        'nonstandard-section-heading', 'medium',
+        `Heading "${section.name}" doesn't match any section label ATS parsers recognize, so its content may be skipped or filed under the wrong category.`,
+        -6, `content.flexSections.${section.id}.name`,
+        sectionRenameSuggestion(section.name)
+      ));
+    } else if (isAllCapsHeading(section.name)) {
+      reasons.push(reason(
+        'all-caps-section-heading', 'medium',
+        `Heading "${section.name}" is in ALL CAPS. Some parsers tokenize all-caps text as acronyms or skip it when scanning for section labels.`,
+        -4, `content.flexSections.${section.id}.name`,
+        `Use standard capitalization, e.g. "${toTitleCase(section.name)}".`
+      ));
     }
-    if (sectionText(section).trim().length < 12) {
-      reasons.push(reason('empty-section', 'medium', `Section "${section.name}" has little or no parseable text.`, -8, `content.flexSections.${section.id}`));
+    const charCount = sectionText(section).trim().length;
+    if (charCount < 12) {
+      reasons.push(reason(
+        'empty-section', 'medium',
+        `Section "${section.name}" has almost no text (${charCount} characters). Parsers extract nothing useful from a section this short.`,
+        -8, `content.flexSections.${section.id}`,
+        'Add real content to this section, or remove/hide it.'
+      ));
     }
   }
 
-  if (PLACEHOLDER_PATTERN.test(flattenedText)) {
-    reasons.push(reason('placeholder-text', 'high', 'Template placeholder text is still present in the resume.', -18, 'resume'));
+  const datedEntries = visibleSections.flatMap((section) =>
+    extractDateValues(section).filter(Boolean).map((value) => ({ sectionId: section.id, sectionName: section.name, value }))
+  );
+
+  const unclearDated = datedEntries.find(({ value }) => UNCLEAR_DATE_PATTERN.test(value) || !CLEAR_DATE_PATTERN.test(value));
+  if (unclearDated) {
+    reasons.push(reason(
+      'unclear-date-format', 'medium',
+      `The date "${unclearDated.value}" in ${unclearDated.sectionName} doesn't match a format parsers normalize reliably (e.g. "Mar 2022" or "03/2022").`,
+      -8, `content.flexSections.${unclearDated.sectionId}`,
+      'Rewrite it as "Mon YYYY" or "MM/YYYY" — e.g. "Jun 2021" or "06/2021".'
+    ));
   }
 
-  const experienceBullets = experienceSections.flatMap((section) => extractHighlightLines(section));
-  if (experienceSections.length && experienceBullets.filter((line) => wordCount(line) >= 4).length < 2) {
-    reasons.push(reason('thin-bullet-structure', 'medium', 'Experience has too few substantial bullet lines for reliable parser extraction.', -10, 'content.flexSections'));
-  }
-
-  const dateValues = visibleSections.flatMap(extractDateValues).filter(Boolean);
-  if (dateValues.some((value) => UNCLEAR_DATE_PATTERN.test(value) || !CLEAR_DATE_PATTERN.test(value))) {
-    reasons.push(reason('unclear-date-format', 'medium', 'One or more dates use a format that ATS parsers may not normalize reliably.', -8, 'content.flexSections'));
+  const clearDated = datedEntries.filter(({ value }) => CLEAR_DATE_PATTERN.test(value) && !UNCLEAR_DATE_PATTERN.test(value));
+  const distinctStyles = clearDated
+    .flatMap((entry) => {
+      const bucket = dateStyleBucket(entry.value);
+      return bucket ? [{ ...entry, ...bucket }] : [];
+    })
+    .filter((entry, index, all) => all.findIndex((other) => other.id === entry.id) === index);
+  if (distinctStyles.length >= 2) {
+    const [first, second] = distinctStyles;
+    reasons.push(reason(
+      'inconsistent-date-format', 'medium',
+      `Your dates mix formats — e.g. "${first.example}" in ${first.sectionName} vs "${second.example}" in ${second.sectionName}. Parsers normalize a single consistent format more reliably than mixed styles.`,
+      -6, `content.flexSections.${first.sectionId}`,
+      'Pick one format ("Mon YYYY" or "MM/YYYY") and use it for every date on the resume.'
+    ));
   }
 
   if (!options.generatedText?.trim()) {
-    reasons.push(reason('pdf-text-not-tested', 'medium', 'PDF text extraction has not been verified for this resume version.', -8, 'artifact.generatedText'));
+    reasons.push(reason(
+      'pdf-text-not-tested', 'medium',
+      "PDF text extraction hasn't been verified for this version. This is the most direct test of whether an ATS can actually read your exported file.",
+      -8, 'artifact.generatedText',
+      "Compile the resume, then run ATS Readiness again — it checks the generated PDF's text layer."
+    ));
   } else if (pdfTextContainsKeyContent(options.generatedText, resume)) {
-    reasons.push(reason('pdf-text-present', 'info', 'PDF text extraction is available for review.', 0));
+    reasons.push(reason(
+      'pdf-text-present', 'info',
+      "Your exported PDF's text layer includes your key resume content — the same content an ATS parser would extract.",
+      0, 'artifact.generatedText'
+    ));
   } else {
-    reasons.push(reason('pdf-text-missing-key-content', 'high', 'Extracted PDF text is missing key resume content, which suggests parser risk.', -16, 'artifact.generatedText'));
+    reasons.push(reason(
+      'pdf-text-missing-key-content', 'high',
+      "Key content (your name, section headings, top lines) is missing from the exported PDF's text layer. This usually means the PDF renders as an image or uses a font/encoding a parser can't read — an ATS would extract little or nothing from your resume.",
+      -16, 'artifact.generatedText',
+      'Try a different template or font, then re-export and re-run this check.'
+    ));
   }
 
   if (reasons.every((item) => (item.impact ?? 0) >= 0)) {
@@ -117,7 +225,7 @@ export const buildAtsReadinessReport = (
     resumeId: resume.id,
     resumeVersion: resume.version,
     kind: 'ats',
-    methodologyVersion: 'ats-deterministic-v2',
+    methodologyVersion: 'ats-deterministic-v3',
     readinessPercent,
     reasons,
     createdAt
@@ -132,7 +240,7 @@ export const runAtsChecks = (resume: ResumeRecord): CheckResult[] => {
     item.severity,
     item.field ?? 'resume',
     item.message,
-    item.impact && item.impact < 0 ? 'Review this field to improve ATS readiness.' : 'No action required.'
+    item.suggestion ?? ((item.impact ?? 0) < 0 ? 'Review this field to improve ATS readiness.' : 'No action required.')
   ));
 };
 
@@ -150,8 +258,9 @@ const reason = (
   severity: AtsReason['severity'],
   message: string,
   impact: number,
-  field?: string
-): AtsReason => ({ id, field, severity, message, impact });
+  field?: string,
+  suggestion?: string
+): AtsReason => ({ id, field, severity, message, impact, suggestion });
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
@@ -181,32 +290,25 @@ const itemText = (item: FlexEntry | FlexSubSection | CvSubsectionHeading): strin
 
 const sectionText = (section: FlexSection): string => section.items.map(itemText).join('\n');
 
-const flattenResumeText = (resume: ResumeRecord): string => [
-  resume.title,
-  resume.content.profile.fullName,
-  resume.content.profile.headline,
-  resume.content.profile.email,
-  resume.content.profile.phone,
-  resume.content.profile.location,
-  (resume.content.profile.links ?? []).join(', '),
-  resume.content.summary,
-  ...(resume.content.profileHighlights ?? []).map((item) => item.text),
-  ...resume.content.flexSections.flatMap((section) => [section.name, sectionText(section)])
-].filter(Boolean).join('\n');
+const sectionRenameSuggestion = (name: string): string => {
+  const hint = SECTION_RENAME_HINTS.find((entry) => entry.pattern.test(name));
+  if (hint) {
+    const labelText = hint.labels.length > 1 ? `"${hint.labels[0]}" or "${hint.labels[1]}"` : `"${hint.labels[0]}"`;
+    return `This looks like a ${hint.looksLike} section — rename it to ${labelText} so parsers categorize it correctly.`;
+  }
+  return `Use a literal label parsers recognize, such as ${STANDARD_SECTION_LABELS.join(', ')}.`;
+};
 
-const extractHighlightLines = (section: FlexSection): string[] =>
-  section.items.flatMap((item) => {
-    if (isHeading(item)) return [];
-    if (isSubSection(item)) {
-      return item.items.flatMap((subItem) => isHeading(subItem) ? [] : isSubSection(subItem) ? [] : highlightLinesFromEntry(subItem));
-    }
-    return highlightLinesFromEntry(item);
-  });
+const isAllCapsHeading = (name: string) => /[a-zA-Z]/.test(name) && name === name.toUpperCase();
 
-const highlightLinesFromEntry = (entry: FlexEntry): string[] => {
-  const highlights = entry.fields.highlights;
-  const raw = Array.isArray(highlights) ? highlights.join('\n') : String(highlights ?? '');
-  return raw.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+const toTitleCase = (name: string) => name.toLowerCase().replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
+
+const dateStyleBucket = (value: string): { id: string; example: string } | null => {
+  for (const bucket of DATE_STYLE_BUCKETS) {
+    const match = value.match(bucket.pattern);
+    if (match) return { id: bucket.id, example: match[0].trim() };
+  }
+  return null;
 };
 
 const extractDateValues = (section: FlexSection): string[] =>
@@ -220,8 +322,6 @@ const dateValuesFromEntry = (entry: FlexEntry): string[] => {
   const date = entry.fields.date;
   return Array.isArray(date) ? date : [String(date ?? '')];
 };
-
-const wordCount = (value: string) => value.split(/\s+/).filter(Boolean).length;
 
 const pdfTextContainsKeyContent = (generatedText: string, resume: ResumeRecord): boolean => {
   const normalized = normalizeText(generatedText);

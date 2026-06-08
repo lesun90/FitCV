@@ -197,7 +197,7 @@ describe('FitCV UI shell', () => {
     expect(await screen.findByText('High · 1')).toBeInTheDocument();
     expect(screen.getByText(/Medium · \d+/)).toBeInTheDocument();
 
-    const missingNameIssue = screen.getByRole('button', { name: /Name is required for every template/i });
+    const missingNameIssue = screen.getByRole('button', { name: /Your name is missing/i });
     fireEvent.keyDown(missingNameIssue, { key: ' ' });
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'ATS Readiness details' })).not.toBeInTheDocument());
