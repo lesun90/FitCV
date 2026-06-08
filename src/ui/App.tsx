@@ -1286,6 +1286,9 @@ const ReadinessDrawer = ({
                           </span>
                           <div className="readiness-drawer-issue-body">
                             <div className="readiness-drawer-issue-msg">{reason.message}</div>
+                            {reason.suggestion && (
+                              <div className="readiness-drawer-issue-suggestion">{reason.suggestion}</div>
+                            )}
                             {reason.impact !== undefined && (
                               <div className="readiness-drawer-issue-impact">{reason.impact} pts</div>
                             )}

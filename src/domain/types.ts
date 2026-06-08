@@ -281,6 +281,7 @@ export interface ScoringReportRecord {
     message: string;
     severity: 'info' | 'medium' | 'high';
     impact?: number;
+    suggestion?: string;
   }[];
   createdAt: string;
 }

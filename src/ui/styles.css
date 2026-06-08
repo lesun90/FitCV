@@ -5433,6 +5433,13 @@ pre {
   margin-bottom: 2px;
 }
 
+.readiness-drawer-issue-suggestion {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+  margin: 4px 0 3px;
+}
+
 .readiness-drawer-issue-impact {
   color: var(--faint);
   font-size: 11px;

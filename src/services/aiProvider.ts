@@ -166,18 +166,37 @@ export const buildAiAssistMessages = (request: AiAssistRequest): ChatMessage[] =
   }
 ];
 
+const buildReadinessSystemPrompt = (kind: ReadinessReportRequest['kind']) => {
+  if (kind === 'cv-quality') {
+    return [
+      'You are a senior recruiter and resume reviewer evaluating CV readiness for real hiring review.',
+      'Assess the resume as if you were screening it for a competitive professional role. Evaluate clarity, relevance, impact, credibility, structure, seniority signal, evidence of outcomes, readability, and overall recruiter confidence.',
+      'Do not invent facts, claims, metrics, titles, employers, dates, tools, outcomes, qualifications, or job history. Base every reason and suggestion only on the resume text provided.',
+      'Return strict JSON with keys: readinessPercent, reasons.',
+      'readinessPercent must be an integer from 0 to 100 representing how ready this CV is to send to recruiters or hiring managers.',
+      'reasons must be an array of objects with keys: id, severity, message, impact, suggestion.',
+      'severity must be one of info, medium, high.',
+      'impact must be a signed integer showing the approximate score effect of that reason.',
+      'message must explain what the recruiter notices.',
+      'suggestion must explain how to improve that issue without inventing new facts.',
+      'Use concise, specific messages. Focus on the most important issues a senior recruiter would notice. Do not include markdown, commentary, or text outside the JSON.'
+    ].join(' ');
+  }
+  return [
+    'You evaluate resume readiness.',
+    'Do not invent facts, claims, metrics, titles, employers, dates, tools, or outcomes.',
+    'Return strict JSON with keys: readinessPercent, reasons.',
+    'readinessPercent must be an integer from 0 to 100.',
+    'reasons must be an array of objects with keys: id, severity, message, impact.',
+    'severity must be one of info, medium, high.',
+    'Use concise reason messages and do not include a separate improvement section.'
+  ].join(' ');
+};
+
 const buildReadinessMessages = (request: ReadinessReportRequest): ChatMessage[] => [
   {
     role: 'system',
-    content: [
-      'You evaluate resume readiness.',
-      'Do not invent facts, claims, metrics, titles, employers, dates, tools, or outcomes.',
-      'Return strict JSON with keys: readinessPercent, reasons.',
-      'readinessPercent must be an integer from 0 to 100.',
-      'reasons must be an array of objects with keys: id, severity, message, impact.',
-      'severity must be one of info, medium, high.',
-      'Use concise reason messages and do not include a separate improvement section.'
-    ].join(' ')
+    content: buildReadinessSystemPrompt(request.kind)
   },
   {
     role: 'user',
@@ -282,12 +301,14 @@ const parseReadinessResult = (content: string): AiReadinessResult => {
   const reasons = Array.isArray(parsed.reasons) ? parsed.reasons.map((item, index) => {
     const reason = item as Partial<ScoringReportRecord['reasons'][number]>;
     const severity = reason.severity === 'high' || reason.severity === 'medium' || reason.severity === 'info' ? reason.severity : 'info';
+    const suggestion = reason.suggestion ? String(reason.suggestion).trim() : '';
     return {
       id: String(reason.id ?? `ai-reason-${index + 1}`),
       field: reason.field ? String(reason.field) : undefined,
       severity,
       message: String(reason.message ?? '').trim(),
-      impact: typeof reason.impact === 'number' ? reason.impact : undefined
+      impact: typeof reason.impact === 'number' ? reason.impact : undefined,
+      suggestion: suggestion || undefined
     };
   }).filter((reason) => reason.message) : [];
   return { readinessPercent, reasons };

@@ -149,16 +149,22 @@ FitCV is a static, client-only SPA. PDF compilation runs in the browser through 
 
 Use GitHub Pages with a GitHub Actions build so BusyTeX assets are generated and chunked during deployment instead of being committed to the repository.
 
-1. In the repository settings, open **Pages**.
-2. Set **Build and deployment** to **GitHub Actions**.
-3. Add a Pages workflow that installs dependencies, runs `npm run build:chunked`, and uploads `dist/`.
-4. Set `VITE_BASE_PATH` to the repository path for project pages. For this repo:
+1. Open the GitHub repository settings.
+2. Go to **Pages**.
+3. Under **Build and deployment**, set **Source** to **GitHub Actions**.
+4. Create this workflow file:
+
+```
+.github/workflows/deploy-pages.yml
+```
+
+5. Set `VITE_BASE_PATH` to the repository path for project pages. For this repo:
 
 ```
 VITE_BASE_PATH=/FitCV/
 ```
 
-Minimal workflow shape:
+6. Put this workflow in `.github/workflows/deploy-pages.yml`:
 
 ```yaml
 name: Deploy GitHub Pages
@@ -200,6 +206,27 @@ jobs:
       - id: deployment
         uses: actions/deploy-pages@v4
 ```
+
+7. Commit and push the workflow and README changes:
+
+```bash
+git add .github/workflows/deploy-pages.yml README.md
+git commit -m "docs: add GitHub Pages deploy instructions"
+git push
+```
+
+8. Open **Actions** in GitHub and wait for **Deploy GitHub Pages** to finish.
+9. Open the deployed URL:
+
+```
+https://<your-username>.github.io/FitCV/
+```
+
+10. In FitCV, click **Prepare** to download the chunked BusyTeX compiler assets into the browser cache.
+11. Click **Compile** and confirm PDF generation works.
+12. Optional offline check: reload the page, switch the browser offline, and compile again.
+
+If the browser compiler cache gets wedged, click **Clear cache**, then click **Prepare** again.
 
 The generated `dist/core/busytex-chunks/` files are about 16MB each, staying under both GitHub's 100MB git file block and Cloudflare Pages' 25MB file limit. The raw generated folders under `public/core/busytex/` and `public/core/busytex-chunks/` are gitignored.
 

@@ -159,15 +159,22 @@ describe('AI provider service', () => {
     })).rejects.toThrow('AI provider returned no content.');
   });
 
-  it('requests CV quality readiness as a percent with reasons', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+  it('requests CV quality readiness as a senior recruiter review with suggestions', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({
         readinessPercent: 76,
         reasons: [
-          { id: 'generic-bullets', severity: 'medium', message: 'Several bullets describe duties instead of outcomes.', impact: -12 }
+          {
+            id: 'generic-bullets',
+            severity: 'medium',
+            message: 'Several bullets describe duties instead of outcomes.',
+            impact: -12,
+            suggestion: 'Rewrite the strongest bullets to include scope, result, metric, or business impact.'
+          }
         ]
       }) } }]
-    }), { status: 200 })));
+    }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
 
     const report = await requestReadinessReport(testSettings, {
       kind: 'cv-quality',
@@ -178,9 +185,40 @@ describe('AI provider service', () => {
     expect(report).toEqual({
       readinessPercent: 76,
       reasons: [
-        { id: 'generic-bullets', severity: 'medium', message: 'Several bullets describe duties instead of outcomes.', impact: -12 }
+        {
+          id: 'generic-bullets',
+          severity: 'medium',
+          message: 'Several bullets describe duties instead of outcomes.',
+          impact: -12,
+          suggestion: 'Rewrite the strongest bullets to include scope, result, metric, or business impact.'
+        }
       ]
     });
+    const init = fetchMock.mock.calls[0][1]!;
+    const body = JSON.parse(String(init.body));
+    expect(JSON.stringify(body.messages)).toContain('senior recruiter and resume reviewer');
+    expect(JSON.stringify(body.messages)).toContain('suggestion must explain how to improve');
+  });
+
+  it('keeps readiness reasons compatible when providers omit suggestions', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        readinessPercent: 81,
+        reasons: [
+          { id: 'clear-structure', severity: 'info', message: 'The resume structure is easy to scan.', impact: 4 }
+        ]
+      }) } }]
+    }), { status: 200 })));
+
+    const report = await requestReadinessReport(testSettings, {
+      kind: 'cv-quality',
+      resumeTitle: 'Ada Resume',
+      resumeText: 'Ada Lovelace\nBuilt analytical systems.'
+    });
+
+    expect(report.reasons).toEqual([
+      { id: 'clear-structure', severity: 'info', message: 'The resume structure is easy to scan.', impact: 4 }
+    ]);
   });
 
   it('builds fit-to-JD prompts that return proposed edits separate from scoring', () => {

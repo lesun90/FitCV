@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from './App';
 import { AiAssistButton } from './AiAssist';
 import { formatPdfPreviewUrl, highlightLatexSource, parseLatexDiagnostics, renderRichLatexText } from './latexUtils';
+import { storage } from '../services/storage';
 
 vi.mock('../services/pdf', () => ({
   compileResumeToPdf: vi.fn(async () => ({
@@ -98,7 +99,8 @@ vi.mock('../services/aiProvider', async (importOriginal) => {
         severity: 'medium',
         field: 'content.summary',
         message: 'Summary could state a clearer target role.',
-        impact: -8
+        impact: -8,
+        suggestion: 'Add a concise target role and strongest evidence from the resume.'
       }]
     }))
   };
@@ -211,6 +213,27 @@ describe('FitCV UI shell', () => {
     expect(await screen.findByText(/sends resume text to your configured AI provider/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: /ATS/ }));
     expect(await screen.findByText(/runs locally and does not send resume content to AI/i)).toBeInTheDocument();
+  });
+
+  it('shows CV Quality improvement suggestions in the readiness drawer', async () => {
+    await storage.saveProviderSettings({
+      id: 'default',
+      schemaVersion: 1,
+      endpointUrl: 'https://ai.example.test/v1/chat/completions',
+      model: 'cv-model',
+      rememberApiKey: false,
+      createdAt: '2026-06-03T00:00:00.000Z',
+      updatedAt: '2026-06-03T00:00:00.000Z'
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /^Edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: /CV Quality/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Run CV Quality' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+    expect(await screen.findByText('Summary could state a clearer target role.')).toBeInTheDocument();
+    expect(screen.getByText('Add a concise target role and strongest evidence from the resume.')).toBeInTheDocument();
   });
 
   it('shows Awesome CV as a FitCV layout with module controls in the editor', async () => {
