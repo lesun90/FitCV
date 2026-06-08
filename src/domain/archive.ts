@@ -56,9 +56,8 @@ export const importFitcvArchive = async (file: Blob): Promise<FitcvArchive> => {
   archive.scoringReports ??= [];
   archive.providerSettings ??= [];
   archive.artifacts ??= [];
-  const serialized = JSON.stringify(archive);
-  if (/api[_-]?key|secret|token/i.test(serialized)) {
-    throw new Error('Archive contains secret-like fields and was not imported.');
+  if (archive.providerSettings.some((settings) => 'apiKey' in settings && (settings as { apiKey?: unknown }).apiKey)) {
+    throw new Error('Archive contains an API key and was not imported.');
   }
   return archive;
 };
