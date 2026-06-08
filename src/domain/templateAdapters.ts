@@ -4,7 +4,7 @@ import { awesomeCvAdapter, clampSpaceValue, defaultSpaceValue, MAX_SPACE_VALUE, 
 export type { LatexProjectRenderResult, TemplateAdapter };
 export { clampSpaceValue, defaultSpaceValue, MAX_SPACE_VALUE, MIN_SPACE_VALUE };
 
-export const templateAdapters: TemplateAdapter[] = [awesomeCvAdapter];
+const templateAdapters: TemplateAdapter[] = [awesomeCvAdapter];
 
 export const getTemplateAdapter = (templateId: TemplateKey): TemplateAdapter | undefined =>
   templateAdapters.find((adapter) => adapter.id === templateId);

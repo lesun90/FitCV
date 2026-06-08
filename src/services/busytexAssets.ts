@@ -168,7 +168,7 @@ export const clearBusyTexAssetCaches = async (onProgress?: (progress: BusyTexAss
   await deleteIndexedDb(EM_CACHE_DB);
 };
 
-export const ensureBusyTexServiceWorker = async (onProgress?: (progress: BusyTexAssetProgress) => void): Promise<void> => {
+const ensureBusyTexServiceWorker = async (onProgress?: (progress: BusyTexAssetProgress) => void): Promise<void> => {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) {
     throw new Error('Service Worker is unavailable in this browser.');
   }

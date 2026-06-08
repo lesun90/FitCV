@@ -12,7 +12,7 @@ const now = () => {
 };
 const id = createId;
 
-export const defaultTemplateSettings = (_templateId: TemplateId): TemplateSettings => ({
+const defaultTemplateSettings = (_templateId: TemplateId): TemplateSettings => ({
   color: '#d13624',
   typography: 'Source Sans Pro',
   spacing: 'comfortable',
