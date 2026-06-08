@@ -95,7 +95,7 @@ export const AiSettingsButton = () => {
   return (
     <div ref={containerRef} style={{ position: 'relative' }}>
       <button className="chrome-button" type="button" onClick={() => setOpen(true)} aria-label="AI settings"><Bot />AI</button>
-      {open && <AiSettingsDialog onClose={() => setOpen(false)} />}
+      {open && <AiSettingsDialog onClose={() => setOpen(false)} onSaved={() => setOpen(false)} />}
     </div>
   );
 };
