@@ -12,6 +12,7 @@ FitCV must compile PDFs in the browser with BusyTeX while avoiding large-file de
 - Users should not download the compiler on normal app load.
 - Users need clear download progress, compile progress, and recovery actions.
 - GitHub Pages subpath deployments must be supported by using Vite/base-aware URLs instead of root-only paths.
+- BusyTeX must not initialize until the chunk-serving Service Worker controls the current page, otherwise `.wasm` and `.data` requests can bypass the virtual asset layer.
 
 ## Recommended Approach
 
@@ -70,11 +71,14 @@ npm run build
 
 Generated files remain deploy artifacts. They should not be checked into the main branch.
 
+GitHub Pages and other subpath deployments must set a build-time base path, for example `VITE_BASE_PATH=/FitCV/`, and every BusyTeX runtime URL must be derived from that base path. The implementation must not hardcode `/core/busytex` as a root URL except as the local root-deploy default.
+
 ## Runtime Architecture
 
 Add a BusyTeX asset service with these responsibilities:
 
 - Register the Service Worker.
+- Wait until the Service Worker is active and controls the current page before allowing BusyTeX initialization.
 - Read the chunk manifest using a base-aware URL.
 - Report compiler asset status.
 - Download required chunks with byte-level progress.
@@ -85,21 +89,41 @@ The Service Worker will:
 
 - Intercept requests for virtual large BusyTeX assets.
 - Return cached reconstructed assets when available.
-- Reconstruct assets from cached chunks when needed.
+- Return an explicit missing-asset response when a virtual asset is not installed.
 - Let normal small BusyTeX files pass through as static assets.
 - Use versioned cache names so BusyTeX upgrades do not mix old and new assets.
 
 The existing `latexCompiler.ts` should keep BusyTeX compilation ownership. Its required changes are limited to deriving the BusyTeX base path from a base-aware helper and calling the new asset service before compilation when virtual assets are not installed.
 
+The app, not the Service Worker, owns large downloads for install and compile-triggered setup. This keeps progress truthful and prevents hidden 649 MB downloads from a background fetch. The Service Worker serves already-installed assets and performs request interception only.
+
+Virtual responses must set correct headers:
+
+```txt
+busytex.wasm: Content-Type: application/wasm
+*.data:       Content-Type: application/octet-stream
+```
+
+The design should avoid reconstructing 339 MB assets repeatedly in memory. The implementation must use one of these strategies and prove it in browser verification:
+
+1. Cache a validated full reconstructed `Response` after app-owned chunk download, then let the Service Worker serve that cached response.
+2. Stream cached chunks from the Service Worker if target browsers support the needed stream behavior reliably.
+
+The first implementation should prefer option 1 for simplicity, with explicit browser memory verification before UI polish.
+
 ## User Flow
 
 Normal app load does not download compiler assets.
 
+Existing eager BusyTeX warmup behavior must be removed or gated behind explicit compile/install intent. In particular, opening a bundled LaTeX project must not call `warmUpLatexRunner()` until the user requests Compile or Prepare offline PDF compiler.
+
 When the user clicks Compile:
 
-1. FitCV checks whether required compiler assets are installed.
-2. If missing, FitCV starts the download/install flow and shows progress.
-3. After assets are ready, BusyTeX compiles the PDF in the browser.
+1. FitCV registers the Service Worker if needed.
+2. FitCV waits for the Service Worker to control the page. If a reload is required to gain control, the UI explains this and resumes after reload where possible.
+3. FitCV checks whether required compiler assets are installed.
+4. If missing, FitCV starts the app-owned download/install flow and shows progress.
+5. After assets are ready, BusyTeX initializes and compiles the PDF in the browser.
 
 Add a secondary action near the PDF/compiler status:
 
@@ -135,6 +159,8 @@ Finalizing PDF
 
 The UI may show an estimated progress bar for these phases, but it must not imply exact mathematical progress.
 
+If BusyTeX logs do not expose reliable boundaries for every phase, the compile UI should use an indeterminate progress bar with the best known phase label. Download progress must be exact by bytes; compile progress can be descriptive.
+
 ## Recovery UX
 
 Add two recovery actions:
@@ -154,6 +180,7 @@ Repair:
 Clear cache:
 
 - Asks for confirmation.
+- Terminates any active BusyTeX runner/worker before deleting caches.
 - Deletes FitCV chunk caches.
 - Deletes reconstructed BusyTeX asset caches.
 - Deletes BusyTeX's Emscripten package cache database (`EM_PRELOAD_CACHE`).
@@ -185,6 +212,7 @@ Handle these cases explicitly:
 - Hash mismatch: discard the corrupt chunk or reconstructed asset and redownload.
 - Storage quota exceeded: show a clear error explaining that the offline compiler requires at least 700 MB of browser storage.
 - Service Worker unavailable: PDF compiler installation is unavailable, but the resume editor remains usable.
+- Service Worker registered but not controlling the page: show a controlled-page setup state and request/retry reload before compiling.
 - Old Service Worker serving an old manifest: compare manifest version and cache version, then prompt for repair/update.
 
 ## Testing
@@ -197,16 +225,20 @@ Automated tests:
 - Repair chooses only missing or corrupt chunks.
 - Clear cache invokes all expected cache deletion paths.
 - Base-aware URL helpers support root and subpath deployments.
+- BusyTeX warmup is not called before explicit compile/install intent.
+- Virtual response helpers set correct MIME headers.
 
 Browser verification:
 
 - Build chunked assets.
 - Serve the app locally.
+- Confirm the Service Worker controls the page before BusyTeX initializes.
 - Compile a sample resume from an empty browser cache.
 - Refresh and compile again using cached assets.
 - Simulate offline mode after Prepare offline PDF compiler.
 - Clear cache and confirm the next compile redownloads assets.
 - Verify at least one GitHub Pages-style subpath URL.
+- Record memory behavior while preparing and serving `texlive-extra.data`.
 
 ## Non-Goals
 
