@@ -49,6 +49,7 @@ import type {
 import { createId } from '../domain/ids';
 import { storage } from '../services/storage';
 import { requestFitToJdDraft, requestJdMatchReport, requestReadinessReport } from '../services/aiProvider';
+import { clearBusyTexAssetCaches, ensureBusyTexAssetsInstalled, getBusyTexAssetStatus, type BusyTexAssetProgress, type BusyTexAssetState } from '../services/busytexAssets';
 import { LatexEditorRoute } from './LatexEditorRoute';
 import { AiAssistButton, AiSettingsButton } from './AiAssist';
 import { formatPdfPreviewUrl, parseLatexDiagnostics, type LatexDiagnosticIssue } from './latexUtils';
@@ -124,7 +125,7 @@ const updateLayoutModule = (
 type ViewMode = 'dashboard' | 'editor';
 
 export const App = () => {
-  if (window.location.pathname === '/latexeditor') return <LatexEditorRoute />;
+  if (window.location.pathname.endsWith('/latexeditor')) return <LatexEditorRoute />;
 
   const [loaded, setLoaded] = useState(false);
   const [resumes, setResumes] = useState<ResumeRecord[]>([]);
@@ -134,6 +135,8 @@ export const App = () => {
   const [activeId, setActiveId] = useState<string>();
   const [activeFittedId, setActiveFittedId] = useState<string>();
   const [artifact, setArtifact] = useState<CompileArtifact>();
+  const [compilerAssetState, setCompilerAssetState] = useState<BusyTexAssetState>('not-installed');
+  const [compilerAssetProgress, setCompilerAssetProgress] = useState<BusyTexAssetProgress>();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [mode, setMode] = useState<ViewMode>('dashboard');
@@ -166,6 +169,7 @@ export const App = () => {
     setFittedCvs(storedFittedCvs);
     setJobDescriptions(storedJobDescriptions);
     setReadinessReports(storedReadinessReports);
+    getBusyTexAssetStatus().then((status) => setCompilerAssetState(status.state));
     if (stored.length === 0) {
       if (!pref?.seededOnce) {
         const seed = sampleResume();
@@ -412,6 +416,9 @@ export const App = () => {
     try {
       setBusy('Compiling in browser');
       setError('');
+      await prepareCompilerAssets();
+      if (gen !== compileGenRef.current) return;
+      setBusy('Running LaTeX in browser');
       const { compileResumeToPdf } = await import('../services/pdf');
       const result = {
         ...await compileResumeToPdf(target),
@@ -430,6 +437,35 @@ export const App = () => {
     } finally {
       if (gen === compileGenRef.current) setBusy('');
     }
+  };
+
+  const prepareCompilerAssets = async (force = false) => {
+    setCompilerAssetState('downloading');
+    const status = await ensureBusyTexAssetsInstalled((progress) => {
+      setCompilerAssetProgress(progress);
+      if (progress.phase === 'downloading' && progress.bytesTotal > 0) {
+        setBusy(`Downloading compiler assets ${Math.round((progress.bytesLoaded / progress.bytesTotal) * 100)}%`);
+      } else if (progress.phase === 'service-worker') {
+        setBusy('Preparing compiler cache');
+      } else if (progress.phase === 'validating') {
+        setBusy('Validating compiler assets');
+      }
+    }, { full: true, force });
+    setCompilerAssetState(status.state);
+    setCompilerAssetProgress(undefined);
+  };
+
+  const clearCompilerAssets = async () => {
+    const confirmed = await confirmAsync('Remove offline PDF compiler files from this browser?', true);
+    if (!confirmed) return;
+    const { terminateBusyTexRunner } = await import('../services/latexCompiler');
+    terminateBusyTexRunner();
+    setCompilerAssetState('clearing-cache');
+    setBusy('Clearing compiler cache');
+    await clearBusyTexAssetCaches(setCompilerAssetProgress);
+    setCompilerAssetProgress(undefined);
+    setCompilerAssetState('not-installed');
+    setBusy('');
   };
 
   const saveThumbnail = async (resumeId: string, pdfBlob: Blob) => {
@@ -607,11 +643,12 @@ export const App = () => {
     <>
       <EditorWorkspace
       active={editorResume} activeFittedCv={activeFittedCv} sourceResume={sourceResume} activeTemplate={activeTemplate} artifact={artifact} autoCompile={autoCompile}
-      busy={busy} cleanCompile={cleanCompile} error={error} pdfUrl={pdfUrl} reviewCount={reviewCount}
+      busy={busy} cleanCompile={cleanCompile} compilerAssetState={compilerAssetState} compilerAssetProgress={compilerAssetProgress} error={error} pdfUrl={pdfUrl} reviewCount={reviewCount}
       atsReadiness={atsReadiness} cvQualityReadiness={cvQualityReadiness} jdMatchReadiness={jdMatchReadiness} hasJobDescription={hasJobDescription}
       unreviewedFitChangeCount={unreviewedFitChangeCount} exportBlocked={exportBlocked}
       onBack={() => setMode('dashboard')} onChange={updateActive} onCompile={() => void compile()}
       onDelete={deleteActive} onDownloadPdf={() => artifact?.pdfBlob && !exportBlocked && downloadBlob(artifact.pdfBlob, `${editorResume.title}.pdf`)}
+      onPrepareCompiler={() => void prepareCompilerAssets()} onRepairCompiler={() => void prepareCompilerAssets(true)} onClearCompiler={() => void clearCompilerAssets()}
       onRunAts={() => void runAtsReadiness()} onRunCvQuality={() => void runCvQualityReadiness()} onRunJdMatch={() => void runJdMatchReadiness()}
       onCreateFittedCv={createFittedCvFromJd} onReviewFittedChange={reviewFittedChange}
       onToggleAutoCompile={() => setAutoCompile((v) => !v)}
@@ -829,12 +866,12 @@ const Dashboard = ({ resumes, fittedCvs, active, reviewCount, readinessReports, 
 
 // --- Editor workspace ---
 
-const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate, artifact, autoCompile, busy, cleanCompile, error, pdfUrl, reviewCount, atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription, unreviewedFitChangeCount, exportBlocked, onBack, onChange, onCompile, onDelete, onDownloadPdf, onRunAts, onRunCvQuality, onRunJdMatch, onCreateFittedCv, onReviewFittedChange, onToggleAutoCompile, onImportCvWithAi }: {
+const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate, artifact, autoCompile, busy, cleanCompile, compilerAssetState, compilerAssetProgress, error, pdfUrl, reviewCount, atsReadiness, cvQualityReadiness, jdMatchReadiness, hasJobDescription, unreviewedFitChangeCount, exportBlocked, onBack, onChange, onCompile, onDelete, onDownloadPdf, onPrepareCompiler, onRepairCompiler, onClearCompiler, onRunAts, onRunCvQuality, onRunJdMatch, onCreateFittedCv, onReviewFittedChange, onToggleAutoCompile, onImportCvWithAi }: {
   active: ResumeRecord; activeFittedCv?: FittedCvRecord; sourceResume?: ResumeRecord; activeTemplate?: (typeof templates)[number]; artifact?: CompileArtifact; autoCompile: boolean;
-  busy: string; cleanCompile: boolean; error: string; pdfUrl: string; reviewCount: number; atsReadiness?: ScoringReportRecord; cvQualityReadiness?: ScoringReportRecord; jdMatchReadiness?: ScoringReportRecord; hasJobDescription: boolean;
+  busy: string; cleanCompile: boolean; compilerAssetState: BusyTexAssetState; compilerAssetProgress?: BusyTexAssetProgress; error: string; pdfUrl: string; reviewCount: number; atsReadiness?: ScoringReportRecord; cvQualityReadiness?: ScoringReportRecord; jdMatchReadiness?: ScoringReportRecord; hasJobDescription: boolean;
   unreviewedFitChangeCount: number; exportBlocked: boolean;
   onBack: () => void; onChange: (recipe: (resume: ResumeRecord) => ResumeRecord) => void; onCompile: () => void; onDelete: () => void;
-  onDownloadPdf: () => void; onRunAts: () => void; onRunCvQuality: () => void; onRunJdMatch: () => void;
+  onDownloadPdf: () => void; onPrepareCompiler: () => void; onRepairCompiler: () => void; onClearCompiler: () => void; onRunAts: () => void; onRunCvQuality: () => void; onRunJdMatch: () => void;
   onCreateFittedCv: (input: { title: string; jobDescriptionText: string }) => Promise<void>;
   onReviewFittedChange: (changeId: string, decision: 'accept' | 'reject' | 'manual') => void;
   onToggleAutoCompile: () => void;
@@ -935,6 +972,10 @@ const EditorWorkspace = ({ active, activeFittedCv, sourceResume, activeTemplate,
               </label>
             )}
             <button className={`chrome-button${autoCompile ? ' selected' : ''}`} onClick={onToggleAutoCompile} title={autoCompile ? 'Auto-compile on' : 'Auto-compile off'}><Zap />Auto</button>
+            <StatusPill icon={<Terminal />} label="Compiler assets" value={formatCompilerAssetState(compilerAssetState, compilerAssetProgress)} tone={compilerAssetState === 'ready-offline' ? 'good' : 'warn'} />
+            <button className="chrome-button" onClick={onPrepareCompiler} disabled={!!busy}><Download />Prepare</button>
+            <button className="chrome-button" onClick={onRepairCompiler} disabled={!!busy}><RotateCw />Repair</button>
+            <button className="chrome-button" onClick={onClearCompiler} disabled={!!busy}><Trash2 />Clear cache</button>
             <button className="chrome-button" onClick={onCompile} disabled={!!busy}><RotateCw />Compile</button>
             <button className="chrome-button primary" disabled={!artifact?.pdfBlob || artifact.status !== 'clean' || exportBlocked} onClick={onDownloadPdf}><Download />Export</button>
           </div>
@@ -2541,6 +2582,13 @@ const readinessTextFromFlexItem = (item: FlexSection['items'][number]): string[]
   if (isHeading(item)) return [item.text];
   if (isSubSection(item)) return [item.environment, ...item.items.flatMap(readinessTextFromFlexItem)];
   return Object.values(item.fields).flatMap((value) => Array.isArray(value) ? value : [value]).filter(Boolean);
+};
+
+const formatCompilerAssetState = (state: BusyTexAssetState, progress?: BusyTexAssetProgress) => {
+  if (state === 'downloading' && progress?.bytesTotal) {
+    return `downloading ${Math.round((progress.bytesLoaded / progress.bytesTotal) * 100)}%`;
+  }
+  return state.replaceAll('-', ' ');
 };
 
 const formatRelative = (date: string) => {

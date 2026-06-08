@@ -19,6 +19,7 @@ const clarifyDockerNetworkUrl = (): Plugin => ({
 });
 
 export default defineConfig({
+  base: process.env.VITE_BASE_PATH ?? '/',
   plugins: [react(), ...(existsSync('/.dockerenv') ? [clarifyDockerNetworkUrl()] : [])],
   server: {
     host: process.env.FITCV_HOST ?? '0.0.0.0',

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BusyTexRunner } from 'texlyre-busytex';
 import { compileLatexProject, busyTexLicenseReview } from './latexCompiler';
+import { ensureBusyTexAssetsInstalled } from './busytexAssets';
 import type { LatexProjectFile } from '../domain/latexProject';
 
 const compileMock = vi.fn();
@@ -18,6 +19,13 @@ vi.mock('texlyre-busytex', () => ({
   XeLatex: vi.fn().mockImplementation(() => ({ compile: compileMock })),
   PdfLatex: vi.fn().mockImplementation(() => ({ compile: compileMock })),
   LuaLatex: vi.fn().mockImplementation(() => ({ compile: compileMock }))
+}));
+
+vi.mock('./busytexAssets', () => ({
+  ensureBusyTexAssetsInstalled: vi.fn(async () => ({ state: 'ready-offline', missingAssetNames: [] })),
+  getConfiguredBusyTexUrls: vi.fn(() => ({
+    busytexBasePath: '/core/busytex'
+  }))
 }));
 
 describe('LaTeX compiler service', () => {
@@ -68,6 +76,27 @@ describe('LaTeX compiler service', () => {
           { path: 'fonts/Roboto-Regular.ttf', content: new Uint8Array([7, 8]) }
         ]
       })
+    );
+  });
+
+  it('installs virtual BusyTeX assets before creating the runner', async () => {
+    compileMock.mockResolvedValue({
+      success: true,
+      pdf: new Uint8Array([1, 2, 3]),
+      log: 'ok',
+      exitCode: 0,
+      logs: []
+    });
+
+    await compileLatexProject({
+      engine: 'xelatex',
+      mainFile: 'resume.tex',
+      files: [textFile('resume.tex', '\\documentclass{article}')]
+    });
+
+    expect(ensureBusyTexAssetsInstalled).toHaveBeenCalled();
+    expect(vi.mocked(ensureBusyTexAssetsInstalled).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(BusyTexRunner).mock.invocationCallOrder[0]
     );
   });
 

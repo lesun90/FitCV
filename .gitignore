@@ -1,6 +1,7 @@
 node_modules/
 dist/
 public/core/busytex/
+public/core/busytex-chunks/
 *.tsbuildinfo
 .DS_Store
 npm-debug.log*

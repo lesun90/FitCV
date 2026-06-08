@@ -13,6 +13,7 @@ import {
   Loader2,
   LockKeyhole,
   Play,
+  Trash2,
   Zap
 } from 'lucide-react';
 import { downloadBlob, StatusPill } from './shared';
@@ -22,11 +23,12 @@ import {
   busyTexLicenseReview,
   checkLatexCompilerCacheState,
   compileLatexProject,
-  warmUpLatexRunner,
+  terminateBusyTexRunner,
   type LatexCompileResult,
   type LatexCompilerCacheState,
   type LatexCompilerEngine
 } from '../services/latexCompiler';
+import { clearBusyTexAssetCaches, ensureBusyTexAssetsInstalled, getBusyTexAssetStatus, type BusyTexAssetProgress, type BusyTexAssetState } from '../services/busytexAssets';
 import {
   getFreshTextFiles,
   listBundledLatexProjects,
@@ -63,6 +65,8 @@ export const LatexEditorRoute = () => {
   const [error, setError] = useState('');
   const [engine, setEngine] = useState<LatexCompilerEngine>('xelatex');
   const [cacheState, setCacheState] = useState<LatexCompilerCacheState>('not-ready');
+  const [assetState, setAssetState] = useState<BusyTexAssetState>('not-installed');
+  const [assetProgress, setAssetProgress] = useState<BusyTexAssetProgress>();
   const [showLogs, setShowLogs] = useState(false);
   const [autoCompile, setAutoCompile] = useState(false);
   const [focusLine, setFocusLine] = useState<number>();
@@ -72,6 +76,7 @@ export const LatexEditorRoute = () => {
 
   useEffect(() => {
     checkLatexCompilerCacheState().then(setCacheState);
+    getBusyTexAssetStatus().then((status) => setAssetState(status.state));
   }, []);
 
   const activeFile = project?.workingFiles.find((file) => file.path === project.activePath);
@@ -95,7 +100,6 @@ export const LatexEditorRoute = () => {
         activePath: firstMain,
         mainFile: firstMain
       });
-      warmUpLatexRunner();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to load bundled LaTeX project.');
     } finally {
@@ -114,11 +118,49 @@ export const LatexEditorRoute = () => {
   const compileProject = async (opts?: { auto?: boolean }) => {
     if (!project?.mainFile) return;
     const gen = ++compileGenRef.current;
-    setBusy('Preparing browser compile');
-    if (!opts?.auto) setShowLogs(true);
-    const result = await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine, fast: opts?.auto });
-    if (gen !== compileGenRef.current) return;
-    setCompileResult(result);
+    try {
+      setBusy('Preparing browser compile');
+      setError('');
+      if (!opts?.auto) setShowLogs(true);
+      await prepareCompilerAssets();
+      if (gen !== compileGenRef.current) return;
+      setBusy('Running LaTeX in browser');
+      const result = await compileLatexProject({ files: project.workingFiles, mainFile: project.mainFile, engine, fast: opts?.auto });
+      if (gen !== compileGenRef.current) return;
+      setCompileResult(result);
+      checkLatexCompilerCacheState().then(setCacheState);
+      getBusyTexAssetStatus().then((status) => setAssetState(status.state));
+    } catch (caught) {
+      if (gen === compileGenRef.current) setError(caught instanceof Error ? caught.message : 'LaTeX compile failed.');
+    } finally {
+      if (gen === compileGenRef.current) setBusy('');
+    }
+  };
+
+  const prepareCompilerAssets = async (force = false) => {
+    setAssetState('downloading');
+    const status = await ensureBusyTexAssetsInstalled((progress) => {
+      setAssetProgress(progress);
+      if (progress.phase === 'downloading' && progress.bytesTotal > 0) {
+        const percent = Math.round((progress.bytesLoaded / progress.bytesTotal) * 100);
+        setBusy(`Downloading compiler assets ${percent}%`);
+      } else if (progress.phase === 'service-worker') {
+        setBusy('Preparing compiler cache');
+      } else if (progress.phase === 'validating') {
+        setBusy('Validating compiler assets');
+      }
+    }, { full: true, force });
+    setAssetState(status.state);
+    setAssetProgress(undefined);
+  };
+
+  const clearCompilerAssets = async () => {
+    terminateBusyTexRunner();
+    setAssetState('clearing-cache');
+    setBusy('Clearing compiler cache');
+    await clearBusyTexAssetCaches(setAssetProgress);
+    setAssetProgress(undefined);
+    setAssetState('not-installed');
     setBusy('');
     checkLatexCompilerCacheState().then(setCacheState);
   };
@@ -183,6 +225,10 @@ export const LatexEditorRoute = () => {
             </select>
           </label>
           <StatusPill icon={<LockKeyhole />} label="Compiler" value={formatCacheState(cacheState)} tone="warn" />
+          <StatusPill icon={<LockKeyhole />} label="Assets" value={formatAssetState(assetState, assetProgress)} tone={assetState === 'ready-offline' ? 'good' : 'warn'} />
+          <button className="chrome-button" disabled={Boolean(busy)} onClick={() => void prepareCompilerAssets()}><Download />Prepare</button>
+          <button className="chrome-button" disabled={Boolean(busy)} onClick={() => void prepareCompilerAssets(true)}><Play />Repair</button>
+          <button className="chrome-button icon-only" disabled={Boolean(busy)} onClick={() => window.confirm('Remove offline PDF compiler files from this browser?') && void clearCompilerAssets()} aria-label="Clear compiler cache"><Trash2 /></button>
           <button
             className={`chrome-button${autoCompile ? ' selected' : ''}`}
             disabled={!project}
@@ -693,6 +739,13 @@ const CompilerStatusPanel = ({
 };
 
 const formatCacheState = (state: string) => state.replaceAll('-', ' ');
+
+const formatAssetState = (state: BusyTexAssetState, progress?: BusyTexAssetProgress) => {
+  if (state === 'downloading' && progress?.bytesTotal) {
+    return `downloading ${Math.round((progress.bytesLoaded / progress.bytesTotal) * 100)}%`;
+  }
+  return state.replaceAll('-', ' ');
+};
 
 const formatIssueLocation = (issue: LatexDiagnosticIssue) => {
   const file = issue.filePath ?? 'Compiler log';

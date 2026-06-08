@@ -1,5 +1,6 @@
 import type { LatexProjectFile } from '../domain/latexProject';
 import { BusyTexRunner, isPackageCached, LuaLatex, PdfLatex, XeLatex, type CompileResult, type FileInput } from 'texlyre-busytex';
+import { ensureBusyTexAssetsInstalled, getConfiguredBusyTexUrls } from './busytexAssets';
 
 export type LatexCompilerEngine = 'xelatex' | 'pdflatex' | 'lualatex';
 export type LatexCompilerCacheState = 'not-ready' | 'downloading' | 'cached' | 'offline-ready' | 'download-failed';
@@ -33,7 +34,7 @@ export const busyTexLicenseReview = {
 
 export const checkLatexCompilerCacheState = async (): Promise<LatexCompilerCacheState> => {
   try {
-    const basePath = (import.meta.env.VITE_BUSYTEX_BASE_PATH ?? '/core/busytex').replace(/\/$/, '');
+    const basePath = getConfiguredBusyTexUrls().busytexBasePath.replace(/\/$/, '');
     const [basic, recommended, extra] = await Promise.all([
       isPackageCached(`${basePath}/texlive-basic.js`),
       isPackageCached(`${basePath}/texlive-recommended.js`),
@@ -62,6 +63,7 @@ export const compileLatexProject = async (request: LatexCompileRequest): Promise
   }
 
   try {
+    await ensureBusyTexAssetsInstalled();
     const result = await createCompiler(request.engine).compile({
       input: mainFile.contents,
       mainTexPath: request.mainFile,
@@ -107,7 +109,7 @@ let sharedRunner: BusyTexRunner | null = null;
 
 const getSharedRunner = (): BusyTexRunner => {
   if (!sharedRunner) {
-    const busytexBasePath = import.meta.env.VITE_BUSYTEX_BASE_PATH ?? '/core/busytex';
+    const busytexBasePath = getConfiguredBusyTexUrls().busytexBasePath;
     sharedRunner = new BusyTexRunner({
       busytexBasePath,
       ...getBusyTexDataPackageConfig(busytexBasePath),
@@ -120,6 +122,10 @@ const getSharedRunner = (): BusyTexRunner => {
 const resetSharedRunner = () => {
   sharedRunner?.terminate();
   sharedRunner = null;
+};
+
+export const terminateBusyTexRunner = (): void => {
+  resetSharedRunner();
 };
 
 const createCompiler = (engine: LatexCompilerEngine) => {

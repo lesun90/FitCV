@@ -7,6 +7,9 @@
     "dev": "vite --host ${FITCV_HOST:-0.0.0.0} --port ${FITCV_PORT:-1512}",
     "build": "tsc -b && vite build",
     "busytex:assets": "texlyre-busytex download-assets public/core",
+    "busytex:chunk": "node scripts/busytexChunker.mjs public/core/busytex public",
+    "busytex:refresh": "rm -rf public/core/busytex public/core/busytex-chunks && npm run busytex:assets && npm run busytex:chunk",
+    "build:chunked": "npm run busytex:assets && npm run busytex:chunk && npm run build",
     "preview": "vite preview --host ${FITCV_HOST:-127.0.0.1} --port ${FITCV_PORT:-4173}",
     "test": "vitest run",
     "test:watch": "vitest"
